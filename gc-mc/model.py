@@ -128,8 +128,6 @@ class GCMCLayer(Block):
         super(GCMCLayer, self).__init__()
         self.num_rates = num_rates
         self.agg = agg
-        self.agg_act = agg_act
-        self.out_act = out_act
         with self.name_scope():
             self.dropout = nn.Dropout(dropout_rate)
             self.W_r = {}
@@ -142,8 +140,8 @@ class GCMCLayer(Block):
                     dtype=np.float32, allow_deferred_init=True)
             self.ufc = nn.Dense(out_units)
             self.ifc = nn.Dense(out_units)
-            self.agg_act = agg_act
-            self.out_act = out_act
+            self.agg_act = get_activation(agg_act)
+            self.out_act = get_activation(out_act)
 
     def forward(self, graph, ufeat, ifeat):
         funcs = {}

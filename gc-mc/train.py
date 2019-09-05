@@ -37,7 +37,7 @@ class Net(Block):
                                      args.gcn_out_units,
                                      args.gcn_dropout,
                                      args.gcn_agg_accum,
-                                     agg_act=args.model_activation)
+                                     agg_act=self._act)
             if args.gen_r_use_classification:
                 self.gen_ratings = BiDecoder(in_units=args.gcn_out_units,
                                              out_units=args.nratings,
