@@ -17,7 +17,7 @@ GENRES_ML_100K =\
 GENRES_ML_1M = GENRES_ML_100K[1:]
 GENRES_ML_10M = GENRES_ML_100K + ['IMAX']
 
-_word_embedding = nlp.embedding.GloVe('glove.840B.300d')
+#_word_embedding = nlp.embedding.GloVe('glove.840B.300d')
 _tokenizer = nlp.data.transforms.SpacyTokenizer()
 
 class MovieLens(object):
@@ -31,6 +31,7 @@ class MovieLens(object):
         print("Starting processing {} ...".format(self._name))
         self._load_raw_user_info()
         self._load_raw_movie_info()
+        print('......')
         if self._name == 'ml-100k':
             self.all_train_rating_info = self._load_raw_rates(os.path.join(READ_DATASET_PATH, self._name, 'u1.base'), '\t')
             self.test_rating_info = self._load_raw_rates(os.path.join(READ_DATASET_PATH, self._name, 'u1.test'), '\t')
@@ -43,6 +44,7 @@ class MovieLens(object):
             self.all_train_rating_info = self.all_rating_info.iloc[shuffled_idx[num_test: ]]
         else:
             raise NotImplementedError
+        print('......')
         num_valid = int(np.ceil(self.all_train_rating_info.shape[0] * self._valid_ratio))
         shuffled_idx = np.random.permutation(self.all_train_rating_info.shape[0])
         self.valid_rating_info = self.all_train_rating_info.iloc[shuffled_idx[: num_valid]]
@@ -87,7 +89,7 @@ class MovieLens(object):
         all_train_rating_pairs, all_train_rating_values = self._generate_pair_value(self.all_train_rating_info)
         train_rating_pairs, train_rating_values = self._generate_pair_value(self.train_rating_info)
         valid_rating_pairs, valid_rating_values = self._generate_pair_value(self.valid_rating_info)
-        #self.test_rating_pairs, self.test_rating_values = self._generate_pair_value(self.test_rating_info)
+        self.test_rating_pairs, self.test_rating_values = self._generate_pair_value(self.test_rating_info)
 
         self.train_graph = self._generate_graphs(train_rating_pairs, train_rating_values, add_support=True)
         self.train_graph.nodes['user'].data['feat'] = mx.nd.array(self.user_feature, ctx=ctx, dtype=np.float32)
@@ -181,7 +183,6 @@ class MovieLens(object):
                                card=(self._num_movie, self._num_user))
             rating_graphs.append(bg)
             rating_graphs.append(rev_bg)
-            print('rating:', rating, 'num:', len(rrow))
         graph = dgl.hetero_from_relations(rating_graphs)
 
         # sanity check

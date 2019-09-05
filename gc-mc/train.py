@@ -56,8 +56,7 @@ class Net(Block):
         #start = time.time()
         rating_user_feat = mx.nd.take(user_out, rating_node_pairs[0])
         rating_item_feat = mx.nd.take(movie_out, rating_node_pairs[1])
-        pred_ratings = self.gen_ratings(rating_user_fea, rating_item_fea)
-        assert False
+        pred_ratings = self.gen_ratings(rating_user_feat, rating_item_feat)
         #print("The time for decoder is: {:.1f}s".format(time.time()-start))
         return pred_ratings
 
