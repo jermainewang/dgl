@@ -123,6 +123,8 @@ class MovieLens(object):
                                             dtype=np.int64))
         self.train_rating_values = train_rating_values
         '''
+        self.train_rating_pairs = train_rating_pairs
+        self.train_rating_values = train_rating_values
 
         filtered_valid_user = []
         filtered_valid_movie = []

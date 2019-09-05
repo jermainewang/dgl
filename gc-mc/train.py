@@ -47,7 +47,7 @@ class Net(Block):
                 self.gen_ratings = InnerProductLayer(prefix='gen_rating')
 
 
-    def forward(self, graph):
+    def forward(self, graph, rating_node_pairs):
         # start = time.time()
         user_out, movie_out = self.encoder(
             graph, graph.nodes['user'].data['feat'], graph.nodes['movie'].data['feat'])
@@ -99,8 +99,6 @@ def train(args):
     dataset = MovieLens(args.data_name, args.ctx, use_one_hot_fea=args.use_one_hot_fea, symm=args.gcn_agg_norm_symm)
     print("Loading data finished ...\n")
 
-    args.src_key = dataset.name_user
-    args.dst_key = dataset.name_movie
     args.src_in_units = dataset.user_feature.shape[1]
     args.dst_in_units = dataset.movie_feature.shape[1]
     args.nratings = dataset.possible_rating_values.size
@@ -144,8 +142,9 @@ def train(args):
     print("Start training ...")
     for iter_idx in range(1, args.train_max_iter):
         if args.gen_r_use_classification:
-            train_gt_label = mx.nd.array(np.searchsorted(dataset.possible_rating_values, dataset.train_rating_values),
-                                      ctx=args.ctx, dtype=np.int32)
+            train_gt_label = mx.nd.array(np.searchsorted(
+                dataset.possible_rating_values, dataset.train_rating_values),
+                ctx=args.ctx, dtype=np.int32)
         with mx.autograd.record():
             pred_ratings = net(dataset.train_graph, train_rating_pairs)
             if args.gen_r_use_classification:

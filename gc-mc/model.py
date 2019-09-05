@@ -133,11 +133,11 @@ class GCMCLayer(Block):
         with self.name_scope():
             self.dropout = nn.Dropout(dropout_rate)
             self.W_r = {}
-            for i in range(self.num_rates):
-                W_r['rate-%d' % i] = self.params.get(
+            for i in range(1, self.num_rates + 1):
+                self.W_r['rate-%d' % i] = self.params.get(
                     'W_r_%d' % i, shape=(user_in_units, msg_units),
                     dtype=np.float32, allow_deferred_init=True)
-                W_r['rev-rate-%d' % i] = self.params.get(
+                self.W_r['rev-rate-%d' % i] = self.params.get(
                     'revW_r_%d' % i, shape=(movie_in_units, msg_units),
                     dtype=np.float32, allow_deferred_init=True)
             self.ufc = nn.Dense(out_units)
@@ -147,16 +147,16 @@ class GCMCLayer(Block):
 
     def forward(self, graph, ufeat, ifeat):
         funcs = {}
-        for i in range(self.num_rates):
+        for i in range(1, self.num_rates + 1):
             # W_r * x
             graph.nodes['user'].data['h%d' % i] = mx.nd.dot(
-                self.dropout(ufeat), self.W_r['rate-%d' % i])
+                self.dropout(ufeat), self.W_r['rate-%d' % i].data())
             graph.nodes['movie'].data['h%d' % i] = mx.nd.dot(
-                self.dropout(ifeat), self.W_r['rev-rate-%d' % i])
+                self.dropout(ifeat), self.W_r['rev-rate-%d' % i].data())
             funcs['rate-%d' % i] = (fn.copy_u('h%d' % i, 'm'), fn.sum('m', 'h'))
             funcs['rev-rate-%d' % i] = (fn.copy_u('h%d' % i, 'm'), fn.sum('m', 'h'))
         # message passing
-        graph.update_all(funcs, self.agg)
+        graph.multi_update_all(funcs, self.agg)
         # fc and non-linear
         ufeat = self.agg_act(graph.nodes['user'].data.pop('h'))
         ifeat = self.agg_act(graph.nodes['movie'].data.pop('h'))
