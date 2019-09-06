@@ -145,6 +145,9 @@ class GCMCLayer(Block):
 
     def forward(self, graph, ufeat, ifeat):
         funcs = {}
+        # left norm
+        ufeat = ufeat * graph.nodes['user'].data['cj']
+        ifeat = ifeat * graph.nodes['movie'].data['cj']
         for i in range(1, self.num_rates + 1):
             # W_r * x
             graph.nodes['user'].data['h%d' % i] = mx.nd.dot(
@@ -155,9 +158,14 @@ class GCMCLayer(Block):
             funcs['rev-rate-%d' % i] = (fn.copy_u('h%d' % i, 'm'), fn.sum('m', 'h'))
         # message passing
         graph.multi_update_all(funcs, self.agg)
+        ufeat = graph.nodes['user'].data.pop('h')
+        ifeat = graph.nodes['movie'].data.pop('h')
+        # right norm
+        ufeat = ufeat * graph.nodes['user'].data['ci']
+        ifeat = ifeat * graph.nodes['movie'].data['ci']
         # fc and non-linear
-        ufeat = self.agg_act(graph.nodes['user'].data.pop('h'))
-        ifeat = self.agg_act(graph.nodes['movie'].data.pop('h'))
+        ufeat = self.agg_act(ufeat)
+        ifeat = self.agg_act(ifeat)
         ufeat = self.ufc(ufeat)
         ifeat = self.ifc(ifeat)
         return self.out_act(ufeat), self.out_act(ifeat)

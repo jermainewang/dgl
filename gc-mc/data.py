@@ -190,9 +190,10 @@ class MovieLens(object):
 
         if add_support:
             def _calc_norm(x):
-                x = x.astype('float32')
+                x = x.asnumpy().astype('float32')
                 x[x == 0.] = np.inf
-                return 1. / mx.nd.sqrt(x)
+                x = mx.nd.array(1. / np.sqrt(x))
+                return x.as_in_context(self._ctx).expand_dims(1)
             user_ci = []
             user_cj = []
             movie_ci = []
