@@ -22,21 +22,26 @@ def batcher(device):
         nfronts = list(dgl.topological_nodes_generator(batch_trees))
         print('Node frontiers', nfronts)
         print('#Node per frontiers', [len(f) for f in nfronts])
+
         ntid = th.zeros((batch_trees.number_of_nodes(),), dtype=th.int32) - 1
+        etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
         ntypes = []
         for i in range(len(nfronts)):
-            ntid[nfronts[i]] = i
             ntypes.append('l%d' % i)
-        print('Node type id', ntid)
-        etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
         etypes = []
         for i in range(len(nfronts)):
             if i == 0:
                 continue
-            eid = batch_trees.in_edges(nfronts[i], form='eid')
+            u, v, eid = batch_trees.in_edges(nfronts[i], form='all')
+            u = th.unique(u)
+            v = th.unique(v)
+            ntid[u] = i - 1
+            ntid[v] = i
             etid[eid] = i - 1
             etypes.append('e%d' % (i-1))
+        print('Node type id', ntid)
         print('Edge type id', etid)
+
         batch_trees.ndata['type'] = ntid
         batch_trees.edata['type'] = etid
         htree = dgl.hetero_from_homo(batch_trees, ntypes, etypes)
