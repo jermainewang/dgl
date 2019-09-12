@@ -341,6 +341,7 @@ def hetero_from_homo(G, ntypes, etypes, ntype_field='type', etype_field='type'):
     # construct relation graphs
     rel_graphs = []
     for stid, etid, dtid in canonical_etids:
+        print(stid, etid, dtid)
         egrp = edge_groups[etid]
         rel_graph_src = node_invmap[src[egrp]]
         rel_graph_dst = node_invmap[dst[egrp]]
@@ -349,6 +350,7 @@ def hetero_from_homo(G, ntypes, etypes, ntype_field='type', etype_field='type'):
         else:
             rel_graph = bipartite((rel_graph_src, rel_graph_dst),
                                   ntypes[stid], etypes[etid], ntypes[dtid])
+        print(rel_graph.number_of_nodes(ntypes[stid]))
         rel_graphs.append(rel_graph)
 
     hg = hetero_from_relations(rel_graphs)

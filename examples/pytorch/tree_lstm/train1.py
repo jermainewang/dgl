@@ -17,6 +17,30 @@ SSTBatch = collections.namedtuple('SSTBatch', ['graph', 'mask', 'wordid', 'label
 def batcher(device):
     def batcher_dev(batch):
         batch_trees = dgl.batch(batch)
+        print('#Nodes', batch_trees.number_of_nodes())
+        print('#Edges', batch_trees.number_of_edges())
+        nfronts = list(dgl.topological_nodes_generator(batch_trees))
+        print('Node frontiers', nfronts)
+        print('#Node per frontiers', [len(f) for f in nfronts])
+        ntid = th.zeros((batch_trees.number_of_nodes(),), dtype=th.int32) - 1
+        ntypes = []
+        for i in range(len(nfronts)):
+            ntid[nfronts[i]] = i
+            ntypes.append('l%d' % i)
+        print('Node type id', ntid)
+        etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
+        etypes = []
+        for i in range(len(nfronts)):
+            if i == 0:
+                continue
+            eid = batch_trees.in_edges(nfronts[i], form='eid')
+            etid[eid] = i - 1
+            etypes.append('e%d' % (i-1))
+        print('Edge type id', etid)
+        batch_trees.ndata['type'] = ntid
+        batch_trees.edata['type'] = etid
+        htree = dgl.hetero_from_homo(batch_trees, ntypes, etypes)
+        print(htree)
         return SSTBatch(graph=batch_trees,
                         mask=batch_trees.ndata['mask'].to(device),
                         wordid=batch_trees.ndata['x'].to(device),
@@ -79,6 +103,10 @@ def main(args):
         for step, batch in enumerate(train_loader):
             g = batch.graph
             n = g.number_of_nodes()
+            print(n)
+            print(batch.mask)
+            print(batch.label)
+            assert False
             h = th.zeros((n, args.h_size)).to(device)
             c = th.zeros((n, args.h_size)).to(device)
             if step >= 3:
