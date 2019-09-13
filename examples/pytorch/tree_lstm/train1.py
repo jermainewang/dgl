@@ -24,26 +24,27 @@ def batcher(device):
         #print('#Node per frontiers', [len(f) for f in nfronts])
 
         ntid = th.zeros((batch_trees.number_of_nodes(),), dtype=th.int32) - 1
-        etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
         ntypes = []
-        etypes = []
-        for i in range(len(nfronts)):
-            ntypes.append('l%d' % i)
-            if i != len(nfronts) - 1:
-                etypes.append('e%d' % i)
         for i, nodes in enumerate(nfronts):
-            ntid[nodes] = i
-            u, v, eid = batch_trees.in_edges(nfronts[i], form='all')
-            print(batch_trees.in_degrees(nodes))
-            if len(u) == 0:
-                continue
-            etid[eid] = i - 1
-        #print('Node type id', ntid)
+            degs = batch_trees.in_degrees(nodes).numpy()
+            leaf = th.tensor(np.where(degs == 0)[0])
+            root = th.tensor(np.where(degs == 2)[0])
+            leaf_nt = len(ntypes)
+            root_nt = leaf_nt + 1
+            ntid[leaf] = leaf_nt
+            ntid[root] = root_nt
+            ntypes.append('n%d' % leaf_nt)
+            ntypes.append('n%d' % root_nt)
+        batch_trees.ndata[dgl.NTYPE] = ntid
+        print('Node type id', ntid)
+
+        etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
+        etypes = []
+        batch_trees.edata[dgl.ETYPE] = etid
+
         #print('Edge type id', etid)
 
-        batch_trees.ndata['type'] = ntid
-        batch_trees.edata['type'] = etid
-        htree = dgl.hetero_from_homo(batch_trees, ntypes, etypes)
+        htree = dgl.to_hetero(batch_trees, ntypes, etypes)
         
         print(htree.canonical_etypes)
         assert False
