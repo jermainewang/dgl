@@ -34,6 +34,7 @@ def batcher(device):
         for i, nodes in enumerate(nfronts):
             ntid[nodes] = i
             u, v, eid = batch_trees.in_edges(nfronts[i], form='all')
+            print(batch_trees.in_degrees(nodes))
             if len(u) == 0:
                 continue
             etid[eid] = i - 1
@@ -44,9 +45,8 @@ def batcher(device):
         batch_trees.edata['type'] = etid
         htree = dgl.hetero_from_homo(batch_trees, ntypes, etypes)
         
-        # metagraph must be a chain
-        assert len(htree.metagraph.edges()) == len(nfronts) - 1
-        #print(htree.canonical_etypes)
+        print(htree.canonical_etypes)
+        assert False
         #print(htree)
 
         # ndata
