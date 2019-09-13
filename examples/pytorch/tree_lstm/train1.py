@@ -13,13 +13,13 @@ from dgl.data.tree import SST, SSTBatch
 
 from tree_lstm1 import TreeLSTM
 
-SSTBatch = collections.namedtuple('SSTBatch', ['graph', 'mask', 'wordid', 'label'])
+SSTBatch = collections.namedtuple('SSTBatch', ['graph', 'label'])
 def batcher(device):
     def batcher_dev(batch):
         batch_trees = dgl.batch(batch)
 
         rev_batch = dgl.batch([g.reverse() for g in batch])
-        nfronts = list(dgl.topological_nodes_generator(rev_batch))
+        nfronts = list(reversed(dgl.topological_nodes_generator(rev_batch)))
         #print('Node frontiers', nfronts)
         #print('#Node per frontiers', [len(f) for f in nfronts])
 
@@ -32,25 +32,34 @@ def batcher(device):
             if i != len(nfronts) - 1:
                 etypes.append('e%d' % i)
         for i, nodes in enumerate(nfronts):
-            ntid[nodes] = len(nfronts) - i - 1
+            ntid[nodes] = i
             u, v, eid = batch_trees.in_edges(nfronts[i], form='all')
             if len(u) == 0:
                 continue
-            etid[eid] = len(nfronts) - i - 2
+            etid[eid] = i - 1
         #print('Node type id', ntid)
         #print('Edge type id', etid)
 
         batch_trees.ndata['type'] = ntid
         batch_trees.edata['type'] = etid
         htree = dgl.hetero_from_homo(batch_trees, ntypes, etypes)
+        
+        # metagraph must be a chain
         assert len(htree.metagraph.edges()) == len(nfronts) - 1
         #print(htree.canonical_etypes)
         #print(htree)
 
-        return SSTBatch(graph=batch_trees,
-                        mask=batch_trees.ndata['mask'].to(device),
-                        wordid=batch_trees.ndata['x'].to(device),
-                        label=batch_trees.ndata['y'].to(device))
+        # ndata
+        for i, nfront in enumerate(nfronts):
+            htree.nodes['l%d' % i].data['mask'] = batch_trees.ndata['mask'][nfront].to(device)
+            htree.nodes['l%d' % i].data['x'] = batch_trees.ndata['x'][nfront].to(device)
+            htree.nodes['l%d' % i].data['y'] = batch_trees.ndata['y'][nfront].to(device)
+
+        return SSTBatch(graph=htree, label=batch_trees.ndata['y'].to(device))
+        #return SSTBatch(graph=batch_trees,
+                        #mask=batch_trees.ndata['mask'].to(device),
+                        #wordid=batch_trees.ndata['x'].to(device),
+                        #label=)
     return batcher_dev
 
 def main(args):
@@ -108,14 +117,14 @@ def main(args):
         model.train()
         for step, batch in enumerate(train_loader):
             g = batch.graph
-            n = g.number_of_nodes()
-            assert False
-            h = th.zeros((n, args.h_size)).to(device)
-            c = th.zeros((n, args.h_size)).to(device)
+            for ntype in g.ntypes:
+                n = g.number_of_nodes(ntype)
+                g.nodes[ntype].data['h'] = th.zeros((n, args.h_size)).to(device)
+                g.nodes[ntype].data['c'] = th.zeros((n, args.h_size)).to(device)
             if step >= 3:
                 t0 = time.time() # tik
 
-            logits = model(batch, h, c)
+            logits = model(g)
             logp = F.log_softmax(logits, 1)
             loss = F.nll_loss(logp, batch.label, reduction='sum')
 
@@ -129,11 +138,12 @@ def main(args):
             if step > 0 and step % args.log_every == 0:
                 pred = th.argmax(logits, 1)
                 acc = th.sum(th.eq(batch.label, pred))
-                root_ids = [i for i in range(batch.graph.number_of_nodes()) if batch.graph.out_degree(i)==0]
-                root_acc = np.sum(batch.label.cpu().data.numpy()[root_ids] == pred.cpu().data.numpy()[root_ids])
-
-                print("Epoch {:05d} | Step {:05d} | Loss {:.4f} | Acc {:.4f} | Root Acc {:.4f} | Time(s) {:.4f}".format(
-                    epoch, step, loss.item(), 1.0*acc.item()/len(batch.label), 1.0*root_acc/len(root_ids), np.mean(dur)))
+                #root_ids = [i for i in range(batch.graph.number_of_nodes()) if batch.graph.out_degree(i)==0]
+                #root_acc = np.sum(batch.label.cpu().data.numpy()[root_ids] == pred.cpu().data.numpy()[root_ids])
+                #print("Epoch {:05d} | Step {:05d} | Loss {:.4f} | Acc {:.4f} | Root Acc {:.4f} | Time(s) {:.4f}".format(
+                    #epoch, step, loss.item(), 1.0*acc.item()/len(batch.label), 1.0*root_acc/len(root_ids), np.mean(dur)))
+                print("Epoch {:05d} | Step {:05d} | Loss {:.4f} | Acc {:.4f} | Time(s) {:.4f}".format(
+                    epoch, step, loss.item(), 1.0*acc.item()/len(batch.label), np.mean(dur)))
         print('Epoch {:05d} training time {:.4f}s'.format(epoch, time.time() - t_epoch))
 
         # eval on dev set

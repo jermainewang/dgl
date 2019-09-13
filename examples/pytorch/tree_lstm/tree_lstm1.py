@@ -82,33 +82,34 @@ class TreeLSTM(nn.Module):
         cell = TreeLSTMCell if cell_type == 'nary' else ChildSumTreeLSTMCell
         self.cell = cell(x_size, h_size)
 
-    def forward(self, batch, h, c):
+    def forward(self, g):
         """Compute tree-lstm prediction given a batch.
         Parameters
         ----------
         batch : dgl.data.SSTBatch
             The data batch.
-        h : Tensor
-            Initial hidden state.
-        c : Tensor
-            Initial cell state.
         Returns
         -------
         logits : Tensor
             The prediction of each node.
         """
-        g = batch.graph
-        g.register_message_func(self.cell.message_func)
-        g.register_reduce_func(self.cell.reduce_func)
-        g.register_apply_node_func(self.cell.apply_node_func)
+        g = g.local_var()
         # feed embedding
-        embeds = self.embedding(batch.wordid * batch.mask)
-        g.ndata['iou'] = self.cell.W_iou(self.dropout(embeds)) * batch.mask.float().unsqueeze(-1)
-        g.ndata['h'] = h
-        g.ndata['c'] = c
+        #embeds = self.embedding(batch.wordid * batch.mask)
+        #g.ndata['iou'] = self.cell.W_iou(self.dropout(embeds)) * batch.mask.float().unsqueeze(-1)
+        l0_mask = g.nodes['l0'].data['mask']
+        l0_wordid = g.nodes['l0'].data['x']
+        embeds = self.embedding(l0_wordid * l0_mask)
+        g.nodes['l0'].data['iou'] = self.cell.W_iou(self.dropout(embeds)) * l0_mask.float().unsqueeze(-1)
         # propagate
-        dgl.prop_nodes_topo(g)
+        hs = [g.nodes['l0'].data['h']]
+        for i in range(len(g.ntypes) - 1):
+            #print('>>>>>>> etype:', g.to_canonical_etype('e%d' % i), g.number_of_nodes('l%d' % i), g.number_of_nodes('l%d' % (i+1)))
+            g['e%d' % i].update_all(self.cell.message_func, self.cell.reduce_func, self.cell.apply_node_func)
+            hs.append(g.nodes['l%d' % (i+1)].data['h'])
+        #dgl.prop_nodes_topo(g)
         # compute logits
-        h = self.dropout(g.ndata.pop('h'))
+        h = th.cat(hs, dim=0)
+        h = self.dropout(h)
         logits = self.linear(h)
         return logits
