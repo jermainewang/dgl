@@ -27,8 +27,8 @@ def batcher(device):
         ntypes = []
         for i, nodes in enumerate(nfronts):
             degs = batch_trees.in_degrees(nodes).numpy()
-            leaf = th.tensor(np.where(degs == 0)[0])
-            root = th.tensor(np.where(degs == 2)[0])
+            leaf = nodes[th.tensor(np.where(degs == 0)[0])]
+            root = nodes[th.tensor(np.where(degs == 2)[0])]
             leaf_nt = len(ntypes)
             root_nt = leaf_nt + 1
             ntid[leaf] = leaf_nt
