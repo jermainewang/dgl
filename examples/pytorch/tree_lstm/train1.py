@@ -1,5 +1,6 @@
 import argparse
 import collections
+import networkx as nx
 import time
 import numpy as np
 import torch as th
@@ -20,41 +21,63 @@ def batcher(device):
 
         rev_batch = dgl.batch([g.reverse() for g in batch])
         nfronts = list(reversed(dgl.topological_nodes_generator(rev_batch)))
+        #nfronts = list(dgl.topological_nodes_generator(batch_trees))
         #print('Node frontiers', nfronts)
         #print('#Node per frontiers', [len(f) for f in nfronts])
 
         ntid = th.zeros((batch_trees.number_of_nodes(),), dtype=th.int32) - 1
         ntypes = []
-        for i, nodes in enumerate(nfronts):
-            degs = batch_trees.in_degrees(nodes).numpy()
-            leaf = nodes[th.tensor(np.where(degs == 0)[0])]
-            root = nodes[th.tensor(np.where(degs == 2)[0])]
-            leaf_nt = len(ntypes)
-            root_nt = leaf_nt + 1
-            ntid[leaf] = leaf_nt
-            ntid[root] = root_nt
-            ntypes.append('n%d' % leaf_nt)
-            ntypes.append('n%d' % root_nt)
-        batch_trees.ndata[dgl.NTYPE] = ntid
-        print('Node type id', ntid)
-
         etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
         etypes = []
+        batch_trees.ndata['flag'] = batch_trees.in_degrees().int() / 2
+        for i, nodes in enumerate(nfronts):
+            print(batch_trees.in_degrees(nodes), nodes)
+            deg = batch_trees.in_degrees(nodes).numpy()
+            #ntid[nodes] = i + batch_trees.ndata['flag'][nodes] * len(nfronts)
+            #ntid[nodes] = i
+            leaf = nodes[th.tensor(np.where(deg == 0)[0])]
+            root = nodes[th.tensor(np.where(deg == 2)[0])]
+            if len(leaf) != 0:
+                ntid[leaf] = len(ntypes)
+                ntypes.append('n%d' % len(ntypes))
+            if len(root) != 0:
+                ntid[root] = len(ntypes)
+                ntypes.append('n%d' % len(ntypes))
+                u, v, eid = batch_trees.in_edges(root, form='all')
+                deg = batch_trees.in_degrees(u).numpy()
+                toleaf = eid[th.tensor(np.where(deg == 0)[0])]
+                toroot = eid[th.tensor(np.where(deg == 2)[0])]
+                et = 'e%d' % (i - 1)
+                if len(toleaf) != 0:
+                    etid[toleaf] = len(etypes)
+                    etypes.append(et)
+                if len(toroot) != 0:
+                    etid[toroot] = len(etypes)
+                    etypes.append(et)
+            #ntypes.append('l%d' % len(ntypes))
+            #eid = batch_trees.in_edges(nodes, form='eid')
+            #if len(eid) != 0:
+            #    etid[eid] = len(etypes)
+            #    etypes.append('e%d' % len(etypes))
+        batch_trees.ndata[dgl.NTYPE] = ntid
         batch_trees.edata[dgl.ETYPE] = etid
-
-        #print('Edge type id', etid)
+        print(ntypes)
+        print(etypes)
+        print('Node type id', batch_trees.ndata[dgl.NTYPE])
+        print('Edge type id', batch_trees.edata[dgl.ETYPE])
 
         htree = dgl.to_hetero(batch_trees, ntypes, etypes)
         
         print(htree.canonical_etypes)
+        mg = htree.metagraph
         assert False
         #print(htree)
 
         # ndata
-        for i, nfront in enumerate(nfronts):
-            htree.nodes['l%d' % i].data['mask'] = batch_trees.ndata['mask'][nfront].to(device)
-            htree.nodes['l%d' % i].data['x'] = batch_trees.ndata['x'][nfront].to(device)
-            htree.nodes['l%d' % i].data['y'] = batch_trees.ndata['y'][nfront].to(device)
+        #for i, nfront in enumerate(nfronts):
+        #    htree.nodes['l%d' % i].data['mask'] = batch_trees.ndata['mask'][nfront].to(device)
+        #    htree.nodes['l%d' % i].data['x'] = batch_trees.ndata['x'][nfront].to(device)
+        #    htree.nodes['l%d' % i].data['y'] = batch_trees.ndata['y'][nfront].to(device)
 
         return SSTBatch(graph=htree, label=batch_trees.ndata['y'].to(device))
         #return SSTBatch(graph=batch_trees,

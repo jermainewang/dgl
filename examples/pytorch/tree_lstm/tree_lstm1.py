@@ -93,7 +93,6 @@ class TreeLSTM(nn.Module):
         logits : Tensor
             The prediction of each node.
         """
-        g = g.local_var()
         # feed embedding
         #embeds = self.embedding(batch.wordid * batch.mask)
         #g.ndata['iou'] = self.cell.W_iou(self.dropout(embeds)) * batch.mask.float().unsqueeze(-1)
@@ -102,11 +101,13 @@ class TreeLSTM(nn.Module):
         embeds = self.embedding(l0_wordid * l0_mask)
         g.nodes['l0'].data['iou'] = self.cell.W_iou(self.dropout(embeds)) * l0_mask.float().unsqueeze(-1)
         # propagate
-        hs = [g.nodes['l0'].data['h']]
-        for i in range(len(g.ntypes) - 1):
-            #print('>>>>>>> etype:', g.to_canonical_etype('e%d' % i), g.number_of_nodes('l%d' % i), g.number_of_nodes('l%d' % (i+1)))
-            g['e%d' % i].update_all(self.cell.message_func, self.cell.reduce_func, self.cell.apply_node_func)
-            hs.append(g.nodes['l%d' % (i+1)].data['h'])
+        # apply on leaf
+        g.apply_nodes(self.cell.apply_node_func, ntype='l0')
+        for et in g.canonical_etypes:
+            print('>>>>>>> etype:', (st, et, dt))
+            g[et].update_all(self.cell.message_func, self.cell.reduce_func, self.cell.apply_node_func)
+        hs = [g.nodes[nt].data['h'] for nt in g.ntypes]
+        assert False
         #dgl.prop_nodes_topo(g)
         # compute logits
         h = th.cat(hs, dim=0)
