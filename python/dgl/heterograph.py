@@ -3100,6 +3100,11 @@ def combine_frames(frames, ids):
     if len(ids) == 1:
         return frames[0]
     # find common columns and check if their schemes match
+    if 'h' in frames[0].schemes:
+        schemes = ['h', 'c']
+    else:
+        schemes = frames[0].schemes
+    '''
     schemes = frames[0].schemes
     for frame in frames:
         for key, scheme in list(schemes.items()):
@@ -3112,6 +3117,7 @@ def combine_frames(frames, ids):
 
     if len(schemes) == 0:
         return None
+    '''
 
     # concatenate the columns
     frames = [f for f in frames if f.num_rows > 0]

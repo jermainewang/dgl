@@ -15,7 +15,7 @@ from dgl.data.tree import SST, SSTBatch
 
 from tree_lstm1 import TreeLSTM
 
-SSTBatch = collections.namedtuple('SSTBatch', ['graph', 'label', 'height'])
+SSTBatch = collections.namedtuple('SSTBatch', ['graph', 'height', 'leaf_x', 'leaf_section', 'leaf_types'])
 def batcher(device):
     def batcher_dev(batch):
         batch_trees = dgl.batch(batch)
@@ -30,6 +30,7 @@ def batcher(device):
         ntypes = []
         etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
         etypes = []
+        leaf_types = []
         #batch_trees.ndata['flag'] = batch_trees.in_degrees().int() / 2
         for i, nodes in enumerate(nfronts):
             #print(batch_trees.in_degrees(nodes), nodes)
@@ -41,6 +42,7 @@ def batcher(device):
             if len(leaf) != 0:
                 ntid[leaf] = len(ntypes)
                 ntypes.append('l%d' % len(ntypes))
+                leaf_types.append(ntypes[-1])
             if len(root) != 0:
                 ntid[root] = len(ntypes)
                 ntypes.append('l%d' % len(ntypes))
@@ -83,8 +85,14 @@ def batcher(device):
         #    htree.nodes['l%d' % i].data['mask'] = batch_trees.ndata['mask'][nfront].to(device)
         #    htree.nodes['l%d' % i].data['x'] = batch_trees.ndata['x'][nfront].to(device)
         #    htree.nodes['l%d' % i].data['y'] = batch_trees.ndata['y'][nfront].to(device)
+        leaf_x = th.cat([htree.nodes[lty].data['x'] for lty in leaf_types], dim=0)
+        leaf_section = [htree.number_of_nodes(lty) for lty in leaf_types]
 
-        return SSTBatch(graph=htree, label=batch_trees.ndata['y'].to(device), height=len(nfronts) - 1)
+        return SSTBatch(graph=htree,
+                        height=len(nfronts) - 1,
+                        leaf_x=leaf_x,
+                        leaf_section=leaf_section,
+                        leaf_types=leaf_types)
         #return SSTBatch(graph=batch_trees,
                         #mask=batch_trees.ndata['mask'].to(device),
                         #wordid=batch_trees.ndata['x'].to(device),
@@ -157,7 +165,9 @@ def main(args):
 
             logits = model(batch)
             logp = F.log_softmax(logits, 1)
-            loss = F.nll_loss(logp, batch.label, reduction='sum')
+            label = th.cat([g.nodes[nt].data['y'] for nt in g.ntypes], dim=0)
+            loss = F.nll_loss(logp, label, reduction='sum')
+            #print(loss.item())
 
             optimizer.zero_grad()
             loss.backward()
@@ -169,13 +179,13 @@ def main(args):
 
             if step > 0 and step % args.log_every == 0:
                 pred = th.argmax(logits, 1)
-                acc = th.sum(th.eq(batch.label, pred))
+                acc = th.sum(th.eq(label, pred))
                 #root_ids = [i for i in range(batch.graph.number_of_nodes()) if batch.graph.out_degree(i)==0]
                 #root_acc = np.sum(batch.label.cpu().data.numpy()[root_ids] == pred.cpu().data.numpy()[root_ids])
                 #print("Epoch {:05d} | Step {:05d} | Loss {:.4f} | Acc {:.4f} | Root Acc {:.4f} | Time(s) {:.4f}".format(
                     #epoch, step, loss.item(), 1.0*acc.item()/len(batch.label), 1.0*root_acc/len(root_ids), np.mean(dur)))
                 print("Epoch {:05d} | Step {:05d} | Loss {:.4f} | Acc {:.4f} | Time(s) {:.4f}".format(
-                    epoch, step, loss.item(), 1.0*acc.item()/len(batch.label), np.mean(dur)))
+                    epoch, step, loss.item(), 1.0*acc.item()/len(label), np.mean(dur)))
         print('Epoch {:05d} training time {:.4f}s'.format(epoch, time.time() - t_epoch))
         continue
 

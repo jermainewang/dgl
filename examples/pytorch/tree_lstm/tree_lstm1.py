@@ -28,6 +28,14 @@ class TreeLSTMCell(nn.Module):
         c = th.sum(f * nodes.mailbox['c'], 1)
         return {'iou': self.U_iou(h_cat), 'c': c}
 
+    def apply_func2(self, iou, c):
+        iou = iou + self.b_iou
+        i, o, u = th.chunk(iou, 3, 1)
+        i, o, u = th.sigmoid(i), th.sigmoid(o), th.tanh(u)
+        c = i * u + c
+        h = o * th.tanh(c)
+        return h, c
+
     def apply_node_func(self, nodes):
         iou = nodes.data['iou'] + self.b_iou
         i, o, u = th.chunk(iou, 3, 1)
@@ -97,18 +105,29 @@ class TreeLSTM(nn.Module):
         # feed embedding
         #embeds = self.embedding(batch.wordid * batch.mask)
         #g.ndata['iou'] = self.cell.W_iou(self.dropout(embeds)) * batch.mask.float().unsqueeze(-1)
-        l0_mask = g.nodes['l0'].data['mask']
-        l0_wordid = g.nodes['l0'].data['x']
-        embeds = self.embedding(l0_wordid * l0_mask)
-        g.nodes['l0'].data['iou'] = self.cell.W_iou(self.dropout(embeds)) * l0_mask.float().unsqueeze(-1)
+        embeds = self.embedding(batch.leaf_x)
+        iou = self.cell.W_iou(self.dropout(embeds))
+        c = th.cat([g.nodes[lty].data['c'] for lty in batch.leaf_types], dim=0)
+        h, c = self.cell.apply_func2(iou, c)
+        h = th.split(h, batch.leaf_section)
+        c = th.split(c, batch.leaf_section)
+        for i, lty in enumerate(batch.leaf_types):
+            g.nodes[lty].data.update({'h' : h[i], 'c' : c[i]})
+        '''
+        for lty in batch.leaf_types:
+            leaf_data = g.nodes[lty].data
+            embeds = self.embedding(leaf_data['x'])
+            iou = self.cell.W_iou(self.dropout(embeds))
+            c = leaf_data['c']
+            h, c = self.cell.apply_func2(iou, c)
+            leaf_data.update({'h' : h, 'c' : c})
+        '''
+        # g.apply_nodes(self.cell.apply_node_func, ntype=lty)
         # propagate
-        # apply on leaf
-        g.apply_nodes(self.cell.apply_node_func, ntype='l0')
         for etid in range(batch.height):
             et = 'e%d' % etid
             g[et].update_all(self.cell.message_func, self.cell.reduce_func, self.cell.apply_node_func)
         hs = [g.nodes[nt].data['h'] for nt in g.ntypes]
-        #dgl.prop_nodes_topo(g)
         # compute logits
         h = th.cat(hs, dim=0)
         h = self.dropout(h)
