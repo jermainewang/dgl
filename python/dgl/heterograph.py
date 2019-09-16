@@ -519,15 +519,17 @@ class DGLHeteroGraph(object):
             # create new heterograph
             new_hg = DGLHeteroGraph(new_g, new_ntypes, new_etypes, new_nframes, new_eframes)
 
-            src = new_ntypes[0]
-            dst = new_ntypes[1] if new_g.number_of_ntypes() == 2 else src
+            src = 0
+            dst = 1 if new_g.number_of_ntypes() == 2 else src
             # put the parent node/edge type and IDs
-            new_hg.nodes[src].data[NTYPE] = F.zerocopy_from_dgl_ndarray(flat.induced_srctype)
-            new_hg.nodes[src].data[NID] = F.zerocopy_from_dgl_ndarray(flat.induced_srcid)
-            new_hg.nodes[dst].data[NTYPE] = F.zerocopy_from_dgl_ndarray(flat.induced_dsttype)
-            new_hg.nodes[dst].data[NID] = F.zerocopy_from_dgl_ndarray(flat.induced_dstid)
-            new_hg.edata[ETYPE] = F.zerocopy_from_dgl_ndarray(flat.induced_etype)
-            new_hg.edata[EID] = F.zerocopy_from_dgl_ndarray(flat.induced_eid)
+            '''
+            new_hg._node_frames[src][NTYPE] = F.zerocopy_from_dgl_ndarray(flat.induced_srctype)
+            new_hg._node_frames[src][NID] = F.zerocopy_from_dgl_ndarray(flat.induced_srcid)
+            new_hg._node_frames[dst][NTYPE] = F.zerocopy_from_dgl_ndarray(flat.induced_dsttype)
+            new_hg._node_frames[dst][NID] = F.zerocopy_from_dgl_ndarray(flat.induced_dstid)
+            new_hg._edge_frames[0][ETYPE] = F.zerocopy_from_dgl_ndarray(flat.induced_etype)
+            new_hg._edge_frames[0][EID] = F.zerocopy_from_dgl_ndarray(flat.induced_eid)
+            '''
 
             return new_hg
 
@@ -3094,13 +3096,15 @@ def combine_frames(frames, ids):
     FrameRef
         The resulting frame
     """
+    frames = [frames[i] for i in ids]
+    if len(ids) == 1:
+        return frames[0]
     # find common columns and check if their schemes match
-    schemes = {key: scheme for key, scheme in frames[ids[0]].schemes.items()}
-    for frame_id in ids:
-        frame = frames[frame_id]
+    schemes = frames[0].schemes
+    for frame in frames:
         for key, scheme in list(schemes.items()):
-            if key in frame.schemes:
-                if frame.schemes[key] != scheme:
+            if key in frame.keys():
+                if frame.columns[key].scheme != scheme:
                     raise DGLError('Cannot concatenate column %s with shape %s and shape %s' %
                                    (key, frame.schemes[key], scheme))
             else:
@@ -3110,7 +3114,8 @@ def combine_frames(frames, ids):
         return None
 
     # concatenate the columns
-    to_cat = lambda key: [frames[i][key] for i in ids if frames[i].num_rows > 0]
+    frames = [f for f in frames if f.num_rows > 0]
+    to_cat = lambda key: [frame[key] for frame in frames]
     cols = {key: F.cat(to_cat(key), dim=0) for key in schemes}
     return FrameRef(Frame(cols))
 

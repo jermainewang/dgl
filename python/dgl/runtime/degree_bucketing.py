@@ -77,7 +77,7 @@ def gen_degree_bucketing_schedule(
         idx_list.append(var_0deg)
         fd_list.append(zero_feat)
     if len(buckets) == 1 and zero_deg_nodes is None:
-        ir.WRITE_ROW_(var_out, idx_list[0], fd_list[0])
+        ir.WRITE_DICT_(var_out, fd_list[0])
     else:
         # merge buckets according to the ascending order of the node ids.
         all_idx = F.cat([idx.data.tousertensor() for idx in idx_list], dim=0)

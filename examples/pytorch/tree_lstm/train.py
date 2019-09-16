@@ -79,7 +79,7 @@ def main(args):
         t_epoch = time.time()
         model.train()
         for step, batch in enumerate(train_loader):
-            profiler.start()
+            #profiler.start()
             g = batch.graph
             n = g.number_of_nodes()
             h = th.zeros((n, args.h_size)).to(device)
@@ -97,7 +97,7 @@ def main(args):
 
             if step >= 3:
                 dur.append(time.time() - t0) # tok
-            profiler.stop()
+            #profiler.stop()
 
             if step > 0 and step % args.log_every == 0:
                 pred = th.argmax(logits, 1)

@@ -30,7 +30,7 @@ def batcher(device):
         ntypes = []
         etid = th.zeros((batch_trees.number_of_edges(),), dtype=th.int32) - 1
         etypes = []
-        batch_trees.ndata['flag'] = batch_trees.in_degrees().int() / 2
+        #batch_trees.ndata['flag'] = batch_trees.in_degrees().int() / 2
         for i, nodes in enumerate(nfronts):
             #print(batch_trees.in_degrees(nodes), nodes)
             deg = batch_trees.in_degrees(nodes).numpy()
@@ -68,6 +68,11 @@ def batcher(device):
         #print('Edge type id', batch_trees.edata[dgl.ETYPE])
 
         htree = dgl.to_hetero(batch_trees, ntypes, etypes)
+        for nt in htree.ntypes:
+            htree.nodes[nt].data.pop(dgl.NTYPE)
+        for et in htree.canonical_etypes:
+            htree.edges[et].data.pop(dgl.ETYPE)
+        htree.to(device)
         
         #print(htree.canonical_etypes)
         mg = htree.metagraph
@@ -141,7 +146,7 @@ def main(args):
         t_epoch = time.time()
         model.train()
         for step, batch in enumerate(train_loader):
-            profiler.start()
+            #profiler.start()
             g = batch.graph
             for ntype in g.ntypes:
                 n = g.number_of_nodes(ntype)
@@ -160,7 +165,7 @@ def main(args):
 
             if step >= 3:
                 dur.append(time.time() - t0) # tok
-            profiler.stop()
+            #profiler.stop()
 
             if step > 0 and step % args.log_every == 0:
                 pred = th.argmax(logits, 1)

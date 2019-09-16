@@ -282,6 +282,10 @@ class Frame(MutableMapping):
         return self._remote_init_builder(initializer, name)
 
     @property
+    def columns(self):
+        return self._columns
+
+    @property
     def schemes(self):
         """Return a dictionary of column name to column schemes."""
         return {k : col.scheme for k, col in self._columns.items()}
@@ -499,6 +503,10 @@ class FrameRef(MutableMapping):
             self._index = utils.toindex(slice(0, self._frame.num_rows))
         else:
             self._index = index
+
+    @property
+    def columns(self):
+        return self._frame.columns
 
     @property
     def schemes(self):
