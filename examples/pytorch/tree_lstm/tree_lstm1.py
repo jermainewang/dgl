@@ -82,7 +82,7 @@ class TreeLSTM(nn.Module):
         cell = TreeLSTMCell if cell_type == 'nary' else ChildSumTreeLSTMCell
         self.cell = cell(x_size, h_size)
 
-    def forward(self, g):
+    def forward(self, batch):
         """Compute tree-lstm prediction given a batch.
         Parameters
         ----------
@@ -93,6 +93,7 @@ class TreeLSTM(nn.Module):
         logits : Tensor
             The prediction of each node.
         """
+        g = batch.graph
         # feed embedding
         #embeds = self.embedding(batch.wordid * batch.mask)
         #g.ndata['iou'] = self.cell.W_iou(self.dropout(embeds)) * batch.mask.float().unsqueeze(-1)
@@ -103,11 +104,10 @@ class TreeLSTM(nn.Module):
         # propagate
         # apply on leaf
         g.apply_nodes(self.cell.apply_node_func, ntype='l0')
-        for et in g.canonical_etypes:
-            print('>>>>>>> etype:', (st, et, dt))
+        for etid in range(batch.height):
+            et = 'e%d' % etid
             g[et].update_all(self.cell.message_func, self.cell.reduce_func, self.cell.apply_node_func)
         hs = [g.nodes[nt].data['h'] for nt in g.ntypes]
-        assert False
         #dgl.prop_nodes_topo(g)
         # compute logits
         h = th.cat(hs, dim=0)

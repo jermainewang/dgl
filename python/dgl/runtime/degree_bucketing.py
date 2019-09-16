@@ -48,6 +48,10 @@ def gen_degree_bucketing_schedule(
     buckets = _degree_bucketing_schedule(message_ids, dst_nodes, recv_nodes)
     # generate schedule
     _, degs, buckets, msg_ids, zero_deg_nodes = buckets
+    if len(buckets) == 1 and zero_deg_nodes is None:
+        # short cut for only one bucket
+        buckets = [recv_nodes]
+        msg_ids = [utils.toindex(slice(0, len(dst_nodes)))]
     # loop over each bucket
     idx_list = []
     fd_list = []
@@ -72,12 +76,15 @@ def gen_degree_bucketing_schedule(
         zero_feat = ir.NEW_DICT(var_out, var_0deg, fd_list[0])
         idx_list.append(var_0deg)
         fd_list.append(zero_feat)
-    # merge buckets according to the ascending order of the node ids.
-    all_idx = F.cat([idx.data.tousertensor() for idx in idx_list], dim=0)
-    _, order = F.sort_1d(all_idx)
-    var_order = var.IDX(utils.toindex(order))
-    reduced_feat = ir.MERGE_ROW(var_order, fd_list)
-    ir.WRITE_DICT_(var_out, reduced_feat)
+    if len(buckets) == 1 and zero_deg_nodes is None:
+        ir.WRITE_ROW_(var_out, idx_list[0], fd_list[0])
+    else:
+        # merge buckets according to the ascending order of the node ids.
+        all_idx = F.cat([idx.data.tousertensor() for idx in idx_list], dim=0)
+        _, order = F.sort_1d(all_idx)
+        var_order = var.IDX(utils.toindex(order))
+        reduced_feat = ir.MERGE_ROW(var_order, fd_list)
+        ir.WRITE_DICT_(var_out, reduced_feat)
 
 def _degree_bucketing_schedule(mids, dsts, v):
     """Return the bucketing by degree scheduling for destination nodes of

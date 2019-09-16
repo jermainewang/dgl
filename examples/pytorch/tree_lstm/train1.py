@@ -14,7 +14,7 @@ from dgl.data.tree import SST, SSTBatch
 
 from tree_lstm1 import TreeLSTM
 
-SSTBatch = collections.namedtuple('SSTBatch', ['graph', 'label'])
+SSTBatch = collections.namedtuple('SSTBatch', ['graph', 'label', 'height'])
 def batcher(device):
     def batcher_dev(batch):
         batch_trees = dgl.batch(batch)
@@ -31,7 +31,7 @@ def batcher(device):
         etypes = []
         batch_trees.ndata['flag'] = batch_trees.in_degrees().int() / 2
         for i, nodes in enumerate(nfronts):
-            print(batch_trees.in_degrees(nodes), nodes)
+            #print(batch_trees.in_degrees(nodes), nodes)
             deg = batch_trees.in_degrees(nodes).numpy()
             #ntid[nodes] = i + batch_trees.ndata['flag'][nodes] * len(nfronts)
             #ntid[nodes] = i
@@ -39,10 +39,10 @@ def batcher(device):
             root = nodes[th.tensor(np.where(deg == 2)[0])]
             if len(leaf) != 0:
                 ntid[leaf] = len(ntypes)
-                ntypes.append('n%d' % len(ntypes))
+                ntypes.append('l%d' % len(ntypes))
             if len(root) != 0:
                 ntid[root] = len(ntypes)
-                ntypes.append('n%d' % len(ntypes))
+                ntypes.append('l%d' % len(ntypes))
                 u, v, eid = batch_trees.in_edges(root, form='all')
                 deg = batch_trees.in_degrees(u).numpy()
                 toleaf = eid[th.tensor(np.where(deg == 0)[0])]
@@ -61,16 +61,15 @@ def batcher(device):
             #    etypes.append('e%d' % len(etypes))
         batch_trees.ndata[dgl.NTYPE] = ntid
         batch_trees.edata[dgl.ETYPE] = etid
-        print(ntypes)
-        print(etypes)
-        print('Node type id', batch_trees.ndata[dgl.NTYPE])
-        print('Edge type id', batch_trees.edata[dgl.ETYPE])
+        #print(ntypes)
+        #print(etypes)
+        #print('Node type id', batch_trees.ndata[dgl.NTYPE])
+        #print('Edge type id', batch_trees.edata[dgl.ETYPE])
 
         htree = dgl.to_hetero(batch_trees, ntypes, etypes)
         
-        print(htree.canonical_etypes)
+        #print(htree.canonical_etypes)
         mg = htree.metagraph
-        assert False
         #print(htree)
 
         # ndata
@@ -79,7 +78,7 @@ def batcher(device):
         #    htree.nodes['l%d' % i].data['x'] = batch_trees.ndata['x'][nfront].to(device)
         #    htree.nodes['l%d' % i].data['y'] = batch_trees.ndata['y'][nfront].to(device)
 
-        return SSTBatch(graph=htree, label=batch_trees.ndata['y'].to(device))
+        return SSTBatch(graph=htree, label=batch_trees.ndata['y'].to(device), height=len(nfronts) - 1)
         #return SSTBatch(graph=batch_trees,
                         #mask=batch_trees.ndata['mask'].to(device),
                         #wordid=batch_trees.ndata['x'].to(device),
@@ -148,7 +147,7 @@ def main(args):
             if step >= 3:
                 t0 = time.time() # tik
 
-            logits = model(g)
+            logits = model(batch)
             logp = F.log_softmax(logits, 1)
             loss = F.nll_loss(logp, batch.label, reduction='sum')
 
