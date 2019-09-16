@@ -39,10 +39,9 @@ def create_test_heterograph1():
     ntypes = F.tensor([0, 0, 0, 1, 1, 2, 2])
     etypes = F.tensor([0, 0, 1, 1, 1, 1, 2, 2, 3, 3])
     g0 = dgl.graph(edges)
-    g0.ndata['type'] = ntypes
-    g0.edata['type'] = etypes
-    return dgl.hetero_from_homo(g0, ['user', 'game', 'developer'],
-                                ['follows', 'plays', 'wishes', 'develops'])
+    g0.ndata[dgl.NTYPE] = ntypes
+    g0.edata[dgl.ETYPE] = etypes
+    return dgl.to_hetero(g0, ['user', 'game', 'developer'], ['follows', 'plays', 'wishes', 'develops'])
 
 def get_redfn(name):
     return getattr(F, name)
@@ -130,7 +129,7 @@ def test_query():
             # predecessors & in_edges & in_degree
             pred = [s for s, d in zip(srcs, dsts) if d == 0]
             assert set(F.asnumpy(g.predecessors(0, etype)).tolist()) == set(pred)
-            u, v = g.in_edges([0], etype)
+            u, v = g.in_edges([0], etype=etype)
             assert F.asnumpy(v).tolist() == [0] * len(pred)
             assert set(F.asnumpy(u).tolist()) == set(pred)
             assert g.in_degree(0, etype) == len(pred)
@@ -138,17 +137,17 @@ def test_query():
             # successors & out_edges & out_degree
             succ = [d for s, d in zip(srcs, dsts) if s == 0]
             assert set(F.asnumpy(g.successors(0, etype)).tolist()) == set(succ)
-            u, v = g.out_edges([0], etype)
+            u, v = g.out_edges([0], etype=etype)
             assert F.asnumpy(u).tolist() == [0] * len(succ)
             assert set(F.asnumpy(v).tolist()) == set(succ)
             assert g.out_degree(0, etype) == len(succ)
 
             # edge_id & edge_ids
             for i, (src, dst) in enumerate(zip(srcs, dsts)):
-                assert g.edge_id(src, dst, etype) == i
-                assert F.asnumpy(g.edge_id(src, dst, etype, force_multi=True)).tolist() == [i]
-            assert F.asnumpy(g.edge_ids(srcs, dsts, etype)).tolist() == list(range(n_edges))
-            u, v, e = g.edge_ids(srcs, dsts, etype, force_multi=True)
+                assert g.edge_id(src, dst, etype=etype) == i
+                assert F.asnumpy(g.edge_id(src, dst, etype=etype, force_multi=True)).tolist() == [i]
+            assert F.asnumpy(g.edge_ids(srcs, dsts, etype=etype)).tolist() == list(range(n_edges))
+            u, v, e = g.edge_ids(srcs, dsts, etype=etype, force_multi=True)
             assert F.asnumpy(u).tolist() == srcs
             assert F.asnumpy(v).tolist() == dsts
             assert F.asnumpy(e).tolist() == list(range(n_edges))
@@ -160,7 +159,7 @@ def test_query():
 
             # all_edges.
             for order in ['eid']:
-                u, v, e = g.all_edges(etype, 'all', order)
+                u, v, e = g.all_edges('all', order, etype)
                 assert F.asnumpy(u).tolist() == srcs
                 assert F.asnumpy(v).tolist() == dsts
                 assert F.asnumpy(e).tolist() == list(range(n_edges))
@@ -292,6 +291,23 @@ def test_inc():
             np.array([[-1., 0.],
                       [1., -1.],
                       [0., 1.]]))
+    adj = F.sparse_to_numpy(g.inc('in', etype='plays'))
+    assert np.allclose(
+            adj,
+            np.array([[1., 1., 0., 0.],
+                      [0., 0., 1., 1.]]))
+    adj = F.sparse_to_numpy(g.inc('out', etype='plays'))
+    assert np.allclose(
+            adj,
+            np.array([[1., 0., 0., 0.],
+                      [0., 1., 0., 1.],
+                      [0., 0., 1., 0.]]))
+    adj = F.sparse_to_numpy(g.inc('both', etype='follows'))
+    assert np.allclose(
+            adj,
+            np.array([[-1., 0.],
+                      [1., -1.],
+                      [0., 1.]]))
     
 def test_view():
     # test data view
@@ -309,7 +325,7 @@ def test_view():
     f5 = g.edges['follows'].data['h']
     assert F.array_equal(f3, f4)
     assert F.array_equal(f3, f5)
-    assert F.array_equal(F.tensor(g.edges('follows', form='eid')), F.arange(0, 2))
+    assert F.array_equal(F.tensor(g.edges(etype='follows', form='eid')), F.arange(0, 2))
 
 def test_view1():
     # test relation view
@@ -506,27 +522,19 @@ def test_flatten():
     # node/edge type.  This differs from the behavior above.
     assert fg.ntypes == ['user']
     assert fg.etypes == ['follows']
-    u1, v1 = g.edges('follows', order='eid')
-    u2, v2 = fg.edges('follows', order='eid')
+    u1, v1 = g.edges(etype='follows', order='eid')
+    u2, v2 = fg.edges(etype='follows', order='eid')
     assert F.array_equal(u1, u2)
     assert F.array_equal(v1, v2)
 
     fg = g['developer', :, 'game']
     assert fg.ntypes == ['developer', 'game']
     assert fg.etypes == ['develops']
-    u1, v1 = g.edges('develops', order='eid')
-    u2, v2 = fg.edges('develops', order='eid')
+    u1, v1 = g.edges(etype='develops', order='eid')
+    u2, v2 = fg.edges(etype='develops', order='eid')
     assert F.array_equal(u1, u2)
     assert F.array_equal(v1, v2)
 
-    # NOTE:
-    # I (gq) was thinking of using g[:, :, :] to convert the heterograph into a homogeneous
-    # graph (i.e. discard all type-specific information).  Turns out that the idea has an
-    # issue.
-    # The problem is that by our definition of flattening, g[:, :, :] would NOT
-    # be converted into a homogeneous graph, because 'game' never appears as source node,
-    # and 'developer' never appears as destination node.
-    # We still need a separate interface for converting to homographs.
     fg = g[:, :, :]
     assert fg.ntypes == ['developer+user', 'game+user']
     assert fg.etypes == ['develops+follows+plays+wishes']
@@ -549,8 +557,24 @@ def test_flatten():
 
 def test_convert():
     hg = create_test_heterograph()
+    hs = []
+    for ntype in hg.ntypes:
+        h = F.randn((hg.number_of_nodes(ntype), 5))
+        hg.nodes[ntype].data['h'] = h
+        hs.append(h)
+    hg.nodes['user'].data['x'] = F.randn((3, 3))
+    ws = []
+    for etype in hg.canonical_etypes:
+        w = F.randn((hg.number_of_edges(etype), 5))
+        hg.edges[etype].data['w'] = w
+        ws.append(w)
+    hg.edges['plays'].data['x'] = F.randn((4, 3))
 
-    g = dgl.hetero_to_homo(hg)
+    g = dgl.to_homo(hg)
+    assert F.array_equal(F.cat(hs, dim=0), g.ndata['h'])
+    assert 'x' not in g.ndata
+    assert F.array_equal(F.cat(ws, dim=0), g.edata['w'])
+    assert 'x' not in g.edata
 
     src, dst = g.all_edges(order='eid')
     src = F.asnumpy(src)
@@ -565,24 +589,26 @@ def test_convert():
         assert np.asscalar(F.asnumpy(src_i)) == nid[src[i]]
         assert np.asscalar(F.asnumpy(dst_i)) == nid[dst[i]]
 
-    hg2 = dgl.hetero_from_homo(
+    hg2 = dgl.to_hetero(
             g, ['user', 'game', 'developer'], ['follows', 'plays', 'wishes', 'develops'],
             ntype_field=dgl.NTYPE, etype_field=dgl.ETYPE)
     assert set(hg.ntypes) == set(hg2.ntypes)
     assert set(hg.canonical_etypes) == set(hg2.canonical_etypes)
     for ntype in hg.ntypes:
         assert hg.number_of_nodes(ntype) == hg2.number_of_nodes(ntype)
+        assert F.array_equal(hg.nodes[ntype].data['h'], hg2.nodes[ntype].data['h'])
     for canonical_etype in hg.canonical_etypes:
-        src, dst = hg.all_edges(canonical_etype, order='eid')
-        src2, dst2 = hg2.all_edges(canonical_etype, order='eid')
+        src, dst = hg.all_edges(etype=canonical_etype, order='eid')
+        src2, dst2 = hg2.all_edges(etype=canonical_etype, order='eid')
         assert F.array_equal(src, src2)
         assert F.array_equal(dst, dst2)
+        assert F.array_equal(hg.edges[canonical_etype].data['w'], hg2.edges[canonical_etype].data['w'])
 
     # hetero_from_homo test case 2
     g = dgl.graph([(0, 2), (1, 2), (2, 3), (0, 3)])
-    g.ndata['type'] = F.tensor([0, 0, 1, 2])
-    g.edata['type'] = F.tensor([0, 0, 1, 2])
-    hg = dgl.hetero_from_homo(g, ['l0', 'l1', 'l2'], ['e0', 'e1', 'e2'])
+    g.ndata[dgl.NTYPE] = F.tensor([0, 0, 1, 2])
+    g.edata[dgl.ETYPE] = F.tensor([0, 0, 1, 2])
+    hg = dgl.to_hetero(g, ['l0', 'l1', 'l2'], ['e0', 'e1', 'e2'])
     assert hg.canonical_etypes == [('l0', 'e0', 'l1'), ('l1', 'e1', 'l2'), ('l0', 'e2', 'l2')]
     assert hg.number_of_nodes('l0') == 2
     assert hg.number_of_nodes('l1') == 1
@@ -627,8 +653,8 @@ def test_subgraph():
         for ntype in sg.ntypes:
             assert sg.number_of_nodes(ntype) == g.number_of_nodes(ntype)
         for etype in sg.etypes:
-            src_sg, dst_sg = sg.all_edges(etype, order='eid')
-            src_g, dst_g = g.all_edges(etype, order='eid')
+            src_sg, dst_sg = sg.all_edges(etype=etype, order='eid')
+            src_g, dst_g = g.all_edges(etype=etype, order='eid')
             assert F.array_equal(src_sg, src_g)
             assert F.array_equal(dst_sg, dst_g)
         assert F.array_equal(sg.nodes['user'].data['h'], g.nodes['user'].data['h'])
@@ -733,22 +759,22 @@ def test_level1():
     assert fail
 
     # test multi recv
-    g.send(g.edges('plays'), mfunc, etype='plays')
-    g.send(g.edges('wishes'), mfunc, etype='wishes')
+    g.send(g.edges(etype='plays'), mfunc, etype='plays')
+    g.send(g.edges(etype='wishes'), mfunc, etype='wishes')
     g.multi_recv([0, 1], {'plays' : rfunc, ('user', 'wishes', 'game'): rfunc2}, 'sum')
     assert F.array_equal(g.nodes['game'].data['y'], F.tensor([[3., 3.], [3., 3.]]))
 
     # test multi recv with apply function
-    g.send(g.edges('plays'), mfunc, etype='plays')
-    g.send(g.edges('wishes'), mfunc, etype='wishes')
+    g.send(g.edges(etype='plays'), mfunc, etype='plays')
+    g.send(g.edges(etype='wishes'), mfunc, etype='wishes')
     g.multi_recv([0, 1], {'plays' : (rfunc, afunc), ('user', 'wishes', 'game'): rfunc2}, 'sum', afunc)
     assert F.array_equal(g.nodes['game'].data['y'], F.tensor([[5., 5.], [5., 5.]]))
 
     # test cross reducer
     g.nodes['user'].data['h'] = F.randn((3, 2))
     for cred in ['sum', 'max', 'min', 'mean']:
-        g.send(g.edges('plays'), mfunc, etype='plays')
-        g.send(g.edges('wishes'), mfunc, etype='wishes')
+        g.send(g.edges(etype='plays'), mfunc, etype='plays')
+        g.send(g.edges(etype='wishes'), mfunc, etype='wishes')
         g.multi_recv([0, 1], {'plays' : (rfunc, afunc), 'wishes': rfunc2}, cred, afunc)
         y = g.nodes['game'].data['y']
         g1 = g['plays']
@@ -814,15 +840,15 @@ def test_level2():
 
     # test multi
     g.multi_send_and_recv(
-        {'plays' : (g.edges('plays'), mfunc, rfunc),
-         ('user', 'wishes', 'game'): (g.edges('wishes'), mfunc, rfunc2)},
+        {'plays' : (g.edges(etype='plays'), mfunc, rfunc),
+         ('user', 'wishes', 'game'): (g.edges(etype='wishes'), mfunc, rfunc2)},
         'sum')
     assert F.array_equal(g.nodes['game'].data['y'], F.tensor([[3., 3.], [3., 3.]]))
 
     # test multi
     g.multi_send_and_recv(
-        {'plays' : (g.edges('plays'), mfunc, rfunc, afunc),
-         ('user', 'wishes', 'game'): (g.edges('wishes'), mfunc, rfunc2)},
+        {'plays' : (g.edges(etype='plays'), mfunc, rfunc, afunc),
+         ('user', 'wishes', 'game'): (g.edges(etype='wishes'), mfunc, rfunc2)},
         'sum', afunc)
     assert F.array_equal(g.nodes['game'].data['y'], F.tensor([[5., 5.], [5., 5.]]))
 
@@ -830,13 +856,13 @@ def test_level2():
     g.nodes['user'].data['h'] = F.randn((3, 2))
     for cred in ['sum', 'max', 'min', 'mean']:
         g.multi_send_and_recv(
-            {'plays' : (g.edges('plays'), mfunc, rfunc, afunc),
-             'wishes': (g.edges('wishes'), mfunc, rfunc2)},
+            {'plays' : (g.edges(etype='plays'), mfunc, rfunc, afunc),
+             'wishes': (g.edges(etype='wishes'), mfunc, rfunc2)},
             cred, afunc)
         y = g.nodes['game'].data['y']
-        g['plays'].send_and_recv(g.edges('plays'), mfunc, rfunc, afunc)
+        g['plays'].send_and_recv(g.edges(etype='plays'), mfunc, rfunc, afunc)
         y1 = g.nodes['game'].data['y']
-        g['wishes'].send_and_recv(g.edges('wishes'), mfunc, rfunc2)
+        g['wishes'].send_and_recv(g.edges(etype='wishes'), mfunc, rfunc2)
         y2 = g.nodes['game'].data['y']
         yy = get_redfn(cred)(F.stack([y1, y2], 0), 0)
         yy = yy + 1  # final afunc
@@ -847,8 +873,8 @@ def test_level2():
     fail = False
     try:
         g.multi_send_and_recv(
-            {'plays' : (g.edges('plays'), mfunc, rfunc),
-             'follows': (g.edges('follows'), mfunc, rfunc2)},
+            {'plays' : (g.edges(etype='plays'), mfunc, rfunc),
+             'follows': (g.edges(etype='follows'), mfunc, rfunc2)},
             'sum')
     except dgl.DGLError:
         fail = True
