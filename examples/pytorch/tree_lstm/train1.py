@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import torch.nn.init as INIT
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from pyinstrument import Profiler
 
 import dgl
 from dgl.data.tree import SST, SSTBatch
@@ -111,11 +112,13 @@ def main(args):
         {'params':params_ex_emb, 'lr':args.lr, 'weight_decay':args.weight_decay},
         {'params':params_emb, 'lr':0.1*args.lr}])
 
+    profiler = Profiler()
     dur = []
     for epoch in range(args.epochs):
         t_epoch = time.time()
         model.train()
         for step, batch in enumerate(train_loader):
+            profiler.start()
             g = batch.graph
             for ntype in g.ntypes:
                 n = g.number_of_nodes(ntype)
@@ -134,6 +137,7 @@ def main(args):
 
             if step >= 3:
                 dur.append(time.time() - t0) # tok
+            profiler.stop()
 
             if step > 0 and step % args.log_every == 0:
                 pred = th.argmax(logits, 1)
@@ -145,6 +149,7 @@ def main(args):
                 print("Epoch {:05d} | Step {:05d} | Loss {:.4f} | Acc {:.4f} | Time(s) {:.4f}".format(
                     epoch, step, loss.item(), 1.0*acc.item()/len(batch.label), np.mean(dur)))
         print('Epoch {:05d} training time {:.4f}s'.format(epoch, time.time() - t_epoch))
+        continue
 
         # eval on dev set
         accs = []
@@ -182,6 +187,9 @@ def main(args):
         for param_group in optimizer.param_groups:
             param_group['lr'] = max(1e-5, param_group['lr']*0.99) #10
             print(param_group['lr'])
+
+    print(profiler.output_text(unicode=True, color=True))
+    exit(0)
 
     # test
     model.load_state_dict(th.load('best_{}.pkl'.format(args.seed)))
