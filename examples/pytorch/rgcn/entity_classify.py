@@ -13,9 +13,12 @@ import numpy as np
 import time
 import torch
 import torch.nn.functional as F
+
+import dgl
 from dgl import DGLGraph
 from dgl.nn.pytorch import RelGraphConv
 from dgl.contrib.data import load_data
+from dgl.data.rdf import AIFB, MUTAG, BGS, AM
 from functools import partial
 
 from model import BaseRGCN
@@ -44,13 +47,30 @@ class EntityClassify(BaseRGCN):
 
 def main(args):
     # load graph data
-    data = load_data(args.dataset, bfs_level=args.bfs_level, relabel=args.relabel)
-    num_nodes = data.num_nodes
-    num_rels = data.num_rels
+    #data = load_data(args.dataset, bfs_level=args.bfs_level, relabel=args.relabel)
+    data = AM()
+    g = dgl.to_homo(data.graph)
+    num_nodes = g.number_of_nodes()
+    edge_type = g.edata[dgl.ETYPE]
+    num_rels = int(edge_type.max()) + 1
     num_classes = data.num_classes
-    labels = data.labels
+    labels = torch.zeros((num_nodes,)).long()
     train_idx = data.train_idx
     test_idx = data.test_idx
+    #assert False
+
+    #num_nodes = data.num_nodes
+    #num_rels = data.num_rels
+    #num_classes = data.num_classes
+    #labels = data.labels
+    #train_idx = data.train_idx
+    #test_idx = data.test_idx
+    print(num_nodes)
+    print(num_rels)
+    print(num_classes)
+    print(len(train_idx))
+    print(len(test_idx))
+    #assert False
 
     # split dataset into train, validate, test
     if args.validation:
@@ -63,9 +83,10 @@ def main(args):
     feats = torch.arange(num_nodes)
 
     # edge type and normalization factor
-    edge_type = torch.from_numpy(data.edge_type)
-    edge_norm = torch.from_numpy(data.edge_norm).unsqueeze(1)
-    labels = torch.from_numpy(labels).view(-1)
+    #edge_type = torch.from_numpy(data.edge_type)
+    #edge_norm = torch.from_numpy(data.edge_norm).unsqueeze(1)
+    edge_norm = None
+    #labels = torch.from_numpy(labels).view(-1)
 
     # check cuda
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
@@ -73,16 +94,16 @@ def main(args):
         torch.cuda.set_device(args.gpu)
         feats = feats.cuda()
         edge_type = edge_type.cuda()
-        edge_norm = edge_norm.cuda()
+        #edge_norm = edge_norm.cuda()
         labels = labels.cuda()
 
     # create graph
-    g = DGLGraph()
-    g.add_nodes(num_nodes)
-    g.add_edges(data.edge_src, data.edge_dst)
+    #g = DGLGraph()
+    #g.add_nodes(num_nodes)
+    #g.add_edges(data.edge_src, data.edge_dst)
 
     # create model
-    model = EntityClassify(len(g),
+    model = EntityClassify(g.number_of_nodes(),
                            args.n_hidden,
                            num_classes,
                            num_rels,
@@ -105,18 +126,22 @@ def main(args):
     model.train()
     for epoch in range(args.n_epochs):
         optimizer.zero_grad()
-        t0 = time.time()
+        if epoch >= 3:
+            t0 = time.time()
         logits = model(g, feats, edge_type, edge_norm)
         loss = F.cross_entropy(logits[train_idx], labels[train_idx])
-        t1 = time.time()
+        if epoch >= 3:
+            t1 = time.time()
         loss.backward()
         optimizer.step()
-        t2 = time.time()
+        if epoch >= 3:
+            t2 = time.time()
 
-        forward_time.append(t1 - t0)
-        backward_time.append(t2 - t1)
+        if epoch >= 3:
+            forward_time.append(t1 - t0)
+            backward_time.append(t2 - t0)
         print("Epoch {:05d} | Train Forward Time(s) {:.4f} | Backward Time(s) {:.4f}".
-              format(epoch, forward_time[-1], backward_time[-1]))
+              format(epoch, np.average(forward_time), np.average(backward_time)))
         train_acc = torch.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
         val_loss = F.cross_entropy(logits[val_idx], labels[val_idx])
         val_acc = torch.sum(logits[val_idx].argmax(dim=1) == labels[val_idx]).item() / len(val_idx)
@@ -166,5 +191,6 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     print(args)
-    args.bfs_level = args.n_layers + 1 # pruning used nodes for memory
+    #args.bfs_level = args.n_layers + 1 # pruning used nodes for memory
+    args.bfs_level = 0
     main(args)

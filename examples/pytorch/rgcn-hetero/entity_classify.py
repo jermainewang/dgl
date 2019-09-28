@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
 
+from pyinstrument import Profiler
+
 import dgl
 from dgl import DGLGraph
 import dgl.function as fn
@@ -333,10 +335,12 @@ def main(args):
     print("start training...")
     dur = []
     model.train()
+    profiler = Profiler()
     for epoch in range(args.n_epochs):
         optimizer.zero_grad()
         if epoch > 5:
             t0 = time.time()
+            #profiler.start()
         #logits = model(g, feats, edge_type, edge_norm)
         logits = model()[category_id]
         loss = F.cross_entropy(logits[train_idx], labels[train_idx])
@@ -345,6 +349,7 @@ def main(args):
         t1 = time.time()
 
         if epoch > 5:
+            #profiler.stop()
             dur.append(t1 - t0)
         train_acc = th.sum(logits[train_idx].argmax(dim=1) == labels[train_idx]).item() / len(train_idx)
         val_loss = F.cross_entropy(logits[val_idx], labels[val_idx])
@@ -352,6 +357,7 @@ def main(args):
         print("Epoch {:05d} | Train Acc: {:.4f} | Train Loss: {:.4f} | Valid Acc: {:.4f} | Valid loss: {:.4f} | Time: {:.4f}".
               format(epoch, train_acc, loss.item(), val_acc, val_loss.item(), np.average(dur)))
     print()
+    #print(profiler.output_text(unicode=True, color=True))
 
     model.eval()
     logits = model.forward()[category_id]

@@ -1271,6 +1271,9 @@ def copy_reduce(reducer, graph, target, in_data, out_size, in_map, out_map):
     """
     pass
 
+def multi_copy_reduce(graph, etids, *inputs):
+    pass
+
 ###############################################################################
 # Other interfaces
 # ----------------

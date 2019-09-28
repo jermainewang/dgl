@@ -2548,6 +2548,26 @@ class DGLHeteroGraph(object):
         inplace: bool, optional
             If True, update will be done in place, but autograd will break.
         """
+        keys = []
+        inputs = []
+        for fr in self._node_frames:
+            klist = []
+            for k, v in fr.items():
+                klist.append(k)
+                inputs.append(v)
+            keys.append(klist)
+        from_names = [None] * len(self.etypes)
+        out_name = None
+        for etype, args in etype_dict.items():
+            etid = self.get_etype_id(etype)
+            stid, dtid = self._graph.metagraph.find_edge(etid)
+            fld = args[0].in_field
+            assert from_names[etid] is None
+            from_names[etid] = fld
+            out_name = args[1].out_field
+        print(from_name)
+        print(out_name)
+        assert False
 
         # TODO(minjie): currently loop over each edge type and reuse the old schedule.
         #   Should replace it with fused kernel.

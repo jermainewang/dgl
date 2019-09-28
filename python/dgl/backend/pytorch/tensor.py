@@ -411,6 +411,53 @@ class CopyReduce(th.autograd.Function):
 binary_reduce = BinaryReduce.apply
 copy_reduce = CopyReduce.apply
 
+class MultiCopyReduce(th.autograd.Function):
+    @staticmethod
+    def forward(ctx, reducer, graph, target, in_data, out_size, in_map,
+                out_map):
+        out_data = in_data.new_empty((out_size,) + in_data.shape[1:])
+        in_data_nd = zerocopy_to_dgl_ndarray(in_data)
+        out_data_nd = zerocopy_to_dgl_ndarray(out_data)
+        K.copy_reduce(
+            reducer if reducer != 'mean' else 'sum', 
+            graph, target, in_data_nd, out_data_nd, in_map[0], out_map[0])
+        # normalize if mean reducer
+        # NOTE(zihao): this is a temporary hack and we should have better solution in the future.
+        if reducer == 'mean':
+            in_ones = in_data.new_ones((in_data.shape[0],))
+            degs = in_data.new_empty((out_data.shape[0],))
+            in_ones_nd = zerocopy_to_dgl_ndarray(in_ones)
+            degs_nd = zerocopy_to_dgl_ndarray(degs)
+            K.copy_reduce(
+                'sum', graph, target, in_ones_nd, degs_nd, in_map[0], out_map[0]) 
+            # reshape
+            degs = degs.reshape((out_data.shape[0],) + (1,) * (out_data.dim() - 1)).clamp(min=1)
+            out_data = out_data / degs
+        else:
+            degs = None
+        # save_for_backward can only save variables
+        ctx.backward_cache = (reducer, graph, target, in_map, out_map,
+                              in_data_nd, out_data_nd, degs)
+        return out_data
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        reducer, graph, target, in_map, out_map, in_data_nd, out_data_nd, degs \
+            = ctx.backward_cache
+        ctx.backward_cache = None
+        grad_in = None
+        if reducer == 'mean':
+            grad_out = grad_out / degs
+        grad_out_nd = zerocopy_to_dgl_ndarray(grad_out)
+        if ctx.needs_input_grad[3]:
+            grad_in = grad_out.new_empty(in_data_nd.shape)
+            K.backward_copy_reduce(
+                reducer if reducer != 'mean' else 'sum', 
+                graph, target, in_data_nd, out_data_nd, grad_out_nd, 
+                zerocopy_to_dgl_ndarray(grad_in), in_map[1], out_map[1])
+        return None, None, None, grad_in, None, None, None
+
+multi_copy_reduce = MultiCopyReduce.apply
 
 def _reduce_grad(grad, shape):
     """Reduce gradient on the broadcast dimension
