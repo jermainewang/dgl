@@ -413,8 +413,19 @@ copy_reduce = CopyReduce.apply
 
 class MultiCopyReduce(th.autograd.Function):
     @staticmethod
-    def forward(ctx, reducer, graph, target, in_data, out_size, in_map,
-                out_map):
+    def forward(ctx, graphs, out_size, *inputs):
+        #print('Call: len(g)=', len(graphs), 'len(inputs)=', len(inputs))
+        assert len(graphs) > 0
+        inner_outs = [inputs[0].new_empty((out_size,) + inputs[0].shape[1:])
+                      for arr in inputs]
+        dgl_inputs = [zerocopy_to_dgl_ndarray(arr) for arr in inputs]
+        dgl_inner_outs = [zerocopy_to_dgl_ndarray(arr) for arr in inner_outs]
+        for i in range(len(graphs)):
+            K.copy_reduce('sum', graphs[i], 0, dgl_inputs[i], dgl_inner_outs[i])
+        out = th.cat([th.unsqueeze(arr, 0) for arr in inner_outs], dim=0).sum(0)
+        ctx.backward_cache = (graphs, dgl_inputs, dgl_inner_outs)
+        return out
+        '''
         out_data = in_data.new_empty((out_size,) + in_data.shape[1:])
         in_data_nd = zerocopy_to_dgl_ndarray(in_data)
         out_data_nd = zerocopy_to_dgl_ndarray(out_data)
@@ -438,10 +449,25 @@ class MultiCopyReduce(th.autograd.Function):
         # save_for_backward can only save variables
         ctx.backward_cache = (reducer, graph, target, in_map, out_map,
                               in_data_nd, out_data_nd, degs)
-        return out_data
+        '''
 
     @staticmethod
     def backward(ctx, grad_out):
+        graphs, dgl_inputs, dgl_inner_outs = ctx.backward_cache
+        ctx.backward_cache = None
+        dgl_grad_out = zerocopy_to_dgl_ndarray(grad_out)
+        grad_inputs = [None, None]
+        for i in range(len(graphs)):
+            if ctx.needs_input_grad[i]:
+                grad_in = grad_out.new_empty(dgl_inputs[i].shape)
+                K.backward_copy_reduce('sum', graphs[i], 0,
+                                       dgl_inputs[i], dgl_inner_outs[i], dgl_grad_out,
+                                       zerocopy_to_dgl_ndarray(grad_in))
+                grad_inputs.append(grad_in)
+            else:
+                grad_inputs.append(None)
+        return tuple(grad_inputs)
+        '''
         reducer, graph, target, in_map, out_map, in_data_nd, out_data_nd, degs \
             = ctx.backward_cache
         ctx.backward_cache = None
@@ -456,6 +482,7 @@ class MultiCopyReduce(th.autograd.Function):
                 graph, target, in_data_nd, out_data_nd, grad_out_nd, 
                 zerocopy_to_dgl_ndarray(grad_in), in_map[1], out_map[1])
         return None, None, None, grad_in, None, None, None
+        '''
 
 multi_copy_reduce = MultiCopyReduce.apply
 

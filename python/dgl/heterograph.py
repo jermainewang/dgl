@@ -2548,29 +2548,32 @@ class DGLHeteroGraph(object):
         inplace: bool, optional
             If True, update will be done in place, but autograd will break.
         """
-        keys = []
-        inputs = []
-        for fr in self._node_frames:
-            klist = []
-            for k, v in fr.items():
-                klist.append(k)
-                inputs.append(v)
-            keys.append(klist)
-        from_names = [None] * len(self.etypes)
+        ctx = None
         out_name = None
+        graphs = [[] for i in range(len(self.ntypes))]
+        in_data = [[] for i in range(len(self.ntypes))]
         for etype, args in etype_dict.items():
             etid = self.get_etype_id(etype)
             stid, dtid = self._graph.metagraph.find_edge(etid)
-            fld = args[0].in_field
-            assert from_names[etid] is None
-            from_names[etid] = fld
+            in_fld = args[0].in_field
+            data = self._node_frames[stid][in_fld]
+            if ctx is None:
+                ctx = utils.to_dgl_context(F.context(data))
+            else:
+                assert ctx == utils.to_dgl_context(F.context(data))
+            in_data[dtid].append(data)
+            graphs[dtid].append(self._graph.get_unitgraph(etid, ctx))
             out_name = args[1].out_field
-        print(from_name)
-        print(out_name)
-        assert False
+        for i in range(len(self.ntypes)):
+            out_data = F.multi_copy_reduce(
+                graphs[i], self._graph.number_of_nodes(i), *(in_data[i]))
+            self._node_frames[i][out_name] = out_data
+        #print(out_name)
+        assert apply_func is None
 
         # TODO(minjie): currently loop over each edge type and reuse the old schedule.
         #   Should replace it with fused kernel.
+        '''
         all_out = defaultdict(list)
         with ir.prog() as prog:
             for etype, args in etype_dict.items():
@@ -2593,6 +2596,7 @@ class DGLHeteroGraph(object):
             # apply
             if apply_func is not None:
                 self.apply_nodes(apply_func, ALL, self.ntypes[dtid], inplace=False)
+        '''
 
     def prop_nodes(self,
                    nodes_generator,

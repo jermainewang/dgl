@@ -17,6 +17,8 @@ from dgl import DGLGraph
 import dgl.function as fn
 from dgl.data.rdf import AIFB, MUTAG, BGS, AM
 
+from utils import ACM
+
 class RelGraphConvHetero(nn.Module):
     r"""Relational graph convolution layer.
 
@@ -286,6 +288,9 @@ def main(args):
         dataset = BGS()
     elif args.dataset == 'am':
         dataset = AM()
+    elif args.dataset == 'acm':
+        dataset = ACM()
+        assert False
     else:
         raise ValueError()
 
