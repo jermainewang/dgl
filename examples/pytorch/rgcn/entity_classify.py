@@ -22,6 +22,7 @@ from dgl.data.rdf import AIFB, MUTAG, BGS, AM
 from functools import partial
 
 from model import BaseRGCN
+from aminer import AMINER
 
 class EntityClassify(BaseRGCN):
     def create_features(self):
@@ -48,29 +49,49 @@ class EntityClassify(BaseRGCN):
 def main(args):
     # load graph data
     #data = load_data(args.dataset, bfs_level=args.bfs_level, relabel=args.relabel)
-    data = AM()
-    g = dgl.to_homo(data.graph)
-    num_nodes = g.number_of_nodes()
-    edge_type = g.edata[dgl.ETYPE]
-    num_rels = int(edge_type.max()) + 1
-    num_classes = data.num_classes
-    labels = torch.zeros((num_nodes,)).long()
-    train_idx = data.train_idx
-    test_idx = data.test_idx
+    if args.dataset == 'am':
+        data = AM()
+        g = dgl.to_homo(data.graph)
+        num_nodes = g.number_of_nodes()
+        edge_type = g.edata[dgl.ETYPE]
+        num_rels = int(edge_type.max()) + 1
+        num_classes = data.num_classes
+        labels = torch.zeros((num_nodes,)).long()
+        train_idx = data.train_idx
+        test_idx = data.test_idx
+    if args.dataset == 'aminer':
+        hg = AMINER()
+        g = dgl.to_homo(hg)
+        num_nodes = g.number_of_nodes()
+        edge_type = g.edata[dgl.ETYPE]
+        num_rels = int(edge_type.max()) + 1
+        num_classes = 8
+        labels = torch.randint(0, num_classes, (num_nodes,)).long()
+        train_idx = torch.tensor(np.random.permutation(np.arange(num_nodes))[0:1000])
+        test_idx = torch.tensor(np.random.permutation(np.arange(num_nodes))[0:200])
+    else:
+        data = load_data(args.dataset, bfs_level=args.bfs_level, relabel=args.relabel)
+        num_nodes = data.num_nodes
+        num_rels = data.num_rels
+        num_classes = data.num_classes
+        labels = data.labels
+        train_idx = data.train_idx
+        test_idx = data.test_idx
+        edge_type = torch.from_numpy(data.edge_type)
+        labels = torch.from_numpy(labels).view(-1)
+        # create graph
+        g = DGLGraph()
+        g.add_nodes(num_nodes)
+        g.add_edges(data.edge_src, data.edge_dst)
+
     #assert False
 
-    #num_nodes = data.num_nodes
-    #num_rels = data.num_rels
-    #num_classes = data.num_classes
-    #labels = data.labels
-    #train_idx = data.train_idx
-    #test_idx = data.test_idx
-    print(num_nodes)
-    print(num_rels)
-    print(num_classes)
-    print(len(train_idx))
-    print(len(test_idx))
-    #assert False
+    print('#nodes:', num_nodes)
+    print('#rel:', num_rels)
+    print('#class:', num_classes)
+    print('#train samples:', len(train_idx))
+    print('#test samples:', len(test_idx))
+    print('#labels:', len(labels))
 
     # split dataset into train, validate, test
     if args.validation:
@@ -83,10 +104,8 @@ def main(args):
     feats = torch.arange(num_nodes)
 
     # edge type and normalization factor
-    #edge_type = torch.from_numpy(data.edge_type)
     #edge_norm = torch.from_numpy(data.edge_norm).unsqueeze(1)
     edge_norm = None
-    #labels = torch.from_numpy(labels).view(-1)
 
     # check cuda
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
@@ -96,11 +115,6 @@ def main(args):
         edge_type = edge_type.cuda()
         #edge_norm = edge_norm.cuda()
         labels = labels.cuda()
-
-    # create graph
-    #g = DGLGraph()
-    #g.add_nodes(num_nodes)
-    #g.add_edges(data.edge_src, data.edge_dst)
 
     # create model
     model = EntityClassify(g.number_of_nodes(),
