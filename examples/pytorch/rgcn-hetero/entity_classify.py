@@ -18,6 +18,7 @@ import dgl.function as fn
 from dgl.data.rdf import AIFB, MUTAG, BGS, AM
 
 from utils import ACM
+from aminer import AMINER
 
 class RelGraphConvHetero(nn.Module):
     r"""Relational graph convolution layer.
@@ -256,10 +257,19 @@ class EntityClassify(nn.Module):
         self.dropout = dropout
         self.use_self_loop = use_self_loop
 
-        self.embed_layer = RelGraphConvHeteroEmbed(
-            self.h_dim, g, activation=F.relu, self_loop=self.use_self_loop,
-            dropout=self.dropout)
         self.layers = nn.ModuleList()
+        #self.embed_layer = RelGraphConvHeteroEmbed(
+            #self.h_dim, g, activation=F.relu, self_loop=self.use_self_loop,
+            #dropout=self.dropout)
+        IN_DIM=100
+        self.embed = nn.ParameterList()
+        for ntype in g.ntypes:
+            self.embed.append(nn.Parameter(th.Tensor(g.number_of_nodes(ntype), IN_DIM)))
+        # i2h
+        self.layers.append(RelGraphConvHetero(
+            IN_DIM, self.h_dim, self.rel_names, "basis",
+            self.num_bases, activation=F.relu, self_loop=self.use_self_loop,
+            dropout=self.dropout))
         # h2h
         for i in range(self.num_hidden_layers):
             self.layers.append(RelGraphConvHetero(
@@ -273,33 +283,48 @@ class EntityClassify(nn.Module):
             self_loop=self.use_self_loop))
 
     def forward(self):
-        h = self.embed_layer()
+        #h = self.embed_layer()
+        h = self.embed
         for layer in self.layers:
             h = layer(self.g, h)
         return h
 
 def main(args):
     # load graph data
-    if args.dataset == 'aifb':
-        dataset = AIFB()
-    elif args.dataset == 'mutag':
-        dataset = MUTAG()
-    elif args.dataset == 'bgs':
-        dataset = BGS()
-    elif args.dataset == 'am':
-        dataset = AM()
+    if args.dataset in ['aifb', 'mutag', 'bgs', 'am']:
+        if args.dataset == 'aifb':
+            dataset = AIFB()
+        elif args.dataset == 'mutag':
+            dataset = MUTAG()
+        elif args.dataset == 'bgs':
+            dataset = BGS()
+        elif args.dataset == 'am':
+            dataset = AM()
+        g = dataset.graph
+        category = dataset.predict_category
+        num_classes = dataset.num_classes
+        train_idx = dataset.train_idx
+        test_idx = dataset.test_idx
+        labels = dataset.labels
     elif args.dataset == 'acm':
         dataset = ACM()
         assert False
+    elif args.dataset == 'aminer':
+        g = AMINER()
+        category = 'author'
+        num_classes = 8
+        num_nodes = g.number_of_nodes(category)
+        labels = th.randint(0, num_classes, (num_nodes,)).long()
+        train_idx = th.tensor(np.random.permutation(np.arange(num_nodes))[0:1000])
+        test_idx = th.tensor(np.random.permutation(np.arange(num_nodes))[0:200])
     else:
         raise ValueError()
 
-    g = dataset.graph
-    category = dataset.predict_category
-    num_classes = dataset.num_classes
-    train_idx = dataset.train_idx
-    test_idx = dataset.test_idx
-    labels = dataset.labels
+    print('Predict category:', category)
+    print('#classes:', num_classes)
+    print('#train samples:', len(train_idx))
+    print('#test samples:', len(test_idx))
+
     category_id = len(g.ntypes)
     for i, ntype in enumerate(g.ntypes):
         if ntype == category:
@@ -349,6 +374,7 @@ def main(args):
         #logits = model(g, feats, edge_type, edge_norm)
         logits = model()[category_id]
         loss = F.cross_entropy(logits[train_idx], labels[train_idx])
+        print(loss.item())
         loss.backward()
         optimizer.step()
         t1 = time.time()

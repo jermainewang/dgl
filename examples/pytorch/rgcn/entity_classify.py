@@ -13,16 +13,167 @@ import numpy as np
 import time
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 
 import dgl
 from dgl import DGLGraph
 from dgl.nn.pytorch import RelGraphConv
 from dgl.contrib.data import load_data
 from dgl.data.rdf import AIFB, MUTAG, BGS, AM
+import dgl.function as fn
 from functools import partial
 
 from model import BaseRGCN
 from aminer import AMINER
+
+class RelGraphConv1(nn.Module):
+    def __init__(self,
+                 in_feat,
+                 out_feat,
+                 num_rels,
+                 regularizer="basis",
+                 num_bases=None,
+                 bias=True,
+                 activation=None,
+                 self_loop=False,
+                 dropout=0.0):
+        super(RelGraphConv1, self).__init__()
+        self.in_feat = in_feat
+        self.out_feat = out_feat
+        self.num_rels = num_rels
+        self.regularizer = regularizer
+        self.num_bases = num_bases
+        #if self.num_bases is None or self.num_bases > self.num_rels or self.num_bases < 0:
+        if self.num_bases is None or self.num_bases < 0:
+            self.num_bases = self.num_rels
+        self.bias = bias
+        self.activation = activation
+        self.self_loop = self_loop
+
+        if regularizer == "basis":
+            # add basis weights
+            self.weight = nn.Parameter(torch.Tensor(self.num_bases, self.in_feat, self.out_feat))
+            #if self.num_bases < self.num_rels:
+                # linear combination coefficients
+            self.w_comp = nn.Parameter(torch.Tensor(self.num_rels, self.num_bases))
+            nn.init.xavier_uniform_(self.weight, gain=nn.init.calculate_gain('relu'))
+            #if self.num_bases < self.num_rels:
+                #nn.init.xavier_uniform_(self.w_comp,
+                                        #gain=nn.init.calculate_gain('relu'))
+            # message func
+            self.message_func = self.basis_message_func
+        elif regularizer == "bdd":
+            if in_feat % num_bases != 0 or out_feat % num_bases != 0:
+                raise ValueError('Feature size must be a multiplier of num_bases.')
+            # add block diagonal weights
+            self.submat_in = in_feat // self.num_bases
+            self.submat_out = out_feat // self.num_bases
+
+            # assuming in_feat and out_feat are both divisible by num_bases
+            self.weight = nn.Parameter(torch.Tensor(
+                self.num_rels, self.num_bases * self.submat_in * self.submat_out))
+            nn.init.xavier_uniform_(self.weight, gain=nn.init.calculate_gain('relu'))
+            # message func
+            self.message_func = self.bdd_message_func
+        else:
+            raise ValueError("Regularizer must be either 'basis' or 'bdd'")
+
+        # bias
+        if self.bias:
+            self.h_bias = nn.Parameter(torch.Tensor(out_feat))
+            nn.init.zeros_(self.h_bias)
+
+        # weight for self loop
+        if self.self_loop:
+            self.loop_weight = nn.Parameter(torch.Tensor(in_feat, out_feat))
+            nn.init.xavier_uniform_(self.loop_weight,
+                                    gain=nn.init.calculate_gain('relu'))
+
+        self.dropout = nn.Dropout(dropout)
+
+    def basis_message_func(self, edges):
+        """Message function for basis regularizer"""
+        if self.num_bases < self.num_rels:
+            # generate all weights from bases
+            weight = self.weight.view(self.num_bases,
+                                      self.in_feat * self.out_feat)
+            weight = torch.matmul(self.w_comp, weight).view(
+                self.num_rels, self.in_feat, self.out_feat)
+        else:
+            weight = self.weight
+
+        msg = utils.bmm_maybe_select(edges.src['h'], weight, edges.data['type'])
+        if 'norm' in edges.data:
+            msg = msg * edges.data['norm']
+        return {'msg': msg}
+
+    def bdd_message_func(self, edges):
+        """Message function for block-diagonal-decomposition regularizer"""
+        if edges.src['h'].dtype == torch.int64 and len(edges.src['h'].shape) == 1:
+            raise TypeError('Block decomposition does not allow integer ID feature.')
+        weight = self.weight.index_select(0, edges.data['type']).view(
+            -1, self.submat_in, self.submat_out)
+        node = edges.src['h'].view(-1, 1, self.submat_in)
+        msg = torch.bmm(node, weight).view(-1, self.out_feat)
+        if 'norm' in edges.data:
+            msg = msg * edges.data['norm']
+        return {'msg': msg}
+
+    def forward(self, g, x, etypes, norm=None):
+        """ Forward computation
+
+        Parameters
+        ----------
+        g : DGLGraph
+            The graph.
+        x : torch.Tensor
+            Input node features. Could be either
+                * :math:`(|V|, D)` dense tensor
+                * :math:`(|V|,)` int64 vector, representing the categorical values of each
+                  node. We then treat the input feature as an one-hot encoding feature.
+        etypes : torch.Tensor
+            Edge type tensor. Shape: :math:`(|E|,)`
+        norm : torch.Tensor
+            Optional edge normalizer tensor. Shape: :math:`(|E|, 1)`
+
+        Returns
+        -------
+        torch.Tensor
+            New node features.
+        """
+        g = g.local_var()
+        #g.ndata['h'] = x
+        #g.edata['type'] = etypes
+        if norm is not None:
+            g.edata['norm'] = norm
+        if self.self_loop:
+            loop_message = utils.matmul_maybe_select(x, self.loop_weight)
+        # message passing
+        weight = self.weight.view(self.num_bases,
+                                  self.in_feat * self.out_feat)
+        weight = torch.matmul(self.w_comp, weight).view(
+            self.num_rels, self.in_feat, self.out_feat)
+
+        x = x.view(1, x.shape[0], x.shape[1])
+        h = torch.matmul(x, weight).squeeze()
+        hs = h.split(1)
+        for i in range(len(hs)):
+            g.ndata['h'] = hs[i].squeeze()
+            e = torch.nonzero(etypes == i).squeeze()
+            g.send_and_recv(e, fn.copy_u('h', 'm'), fn.sum('m', 'h%d' % i))
+        g.ndata['h'] = torch.cat([g.ndata['h%d' % i].unsqueeze(0) for i in range(len(hs))]).sum(0)
+        #g.update_all(self.message_func, fn.sum(msg='msg', out='h'))
+
+        # apply bias and activation
+        node_repr = g.ndata['h']
+        if self.bias:
+            node_repr = node_repr + self.h_bias
+        if self.self_loop:
+            node_repr = node_repr + loop_message
+        if self.activation:
+            node_repr = self.activation(node_repr)
+        node_repr = self.dropout(node_repr)
+        return node_repr
 
 class EntityClassify(BaseRGCN):
     def create_features(self):
@@ -32,17 +183,17 @@ class EntityClassify(BaseRGCN):
         return features
 
     def build_input_layer(self):
-        return RelGraphConv(self.num_nodes, self.h_dim, self.num_rels, "basis",
+        return RelGraphConv1(self.num_nodes, self.h_dim, self.num_rels, "basis",
                 self.num_bases, activation=F.relu, self_loop=self.use_self_loop,
                 dropout=self.dropout)
 
     def build_hidden_layer(self, idx):
-        return RelGraphConv(self.h_dim, self.h_dim, self.num_rels, "basis",
+        return RelGraphConv1(self.h_dim, self.h_dim, self.num_rels, "basis",
                 self.num_bases, activation=F.relu, self_loop=self.use_self_loop,
                 dropout=self.dropout)
 
     def build_output_layer(self):
-        return RelGraphConv(self.h_dim, self.out_dim, self.num_rels, "basis",
+        return RelGraphConv1(self.h_dim, self.out_dim, self.num_rels, "basis",
                 self.num_bases, activation=partial(F.softmax, dim=1),
                 self_loop=self.use_self_loop)
 
@@ -101,7 +252,9 @@ def main(args):
         val_idx = train_idx
 
     # since the nodes are featureless, the input feature is then the node id.
-    feats = torch.arange(num_nodes)
+    #feats = torch.arange(num_nodes)
+    IN_DIM = 100
+    feats = torch.randn((num_nodes, IN_DIM))
 
     # edge type and normalization factor
     #edge_norm = torch.from_numpy(data.edge_norm).unsqueeze(1)
@@ -117,7 +270,7 @@ def main(args):
         labels = labels.cuda()
 
     # create model
-    model = EntityClassify(g.number_of_nodes(),
+    model = EntityClassify(IN_DIM,
                            args.n_hidden,
                            num_classes,
                            num_rels,
@@ -144,6 +297,7 @@ def main(args):
             t0 = time.time()
         logits = model(g, feats, edge_type, edge_norm)
         loss = F.cross_entropy(logits[train_idx], labels[train_idx])
+        print(loss.item())
         if epoch >= 3:
             t1 = time.time()
         loss.backward()

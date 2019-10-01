@@ -72,7 +72,8 @@ class RelGraphConv(nn.Module):
         self.num_rels = num_rels
         self.regularizer = regularizer
         self.num_bases = num_bases
-        if self.num_bases is None or self.num_bases > self.num_rels or self.num_bases < 0:
+        #if self.num_bases is None or self.num_bases > self.num_rels or self.num_bases < 0:
+        if self.num_bases is None or self.num_bases < 0:
             self.num_bases = self.num_rels
         self.bias = bias
         self.activation = activation
@@ -81,13 +82,13 @@ class RelGraphConv(nn.Module):
         if regularizer == "basis":
             # add basis weights
             self.weight = nn.Parameter(th.Tensor(self.num_bases, self.in_feat, self.out_feat))
-            if self.num_bases < self.num_rels:
+            #if self.num_bases < self.num_rels:
                 # linear combination coefficients
-                self.w_comp = nn.Parameter(th.Tensor(self.num_rels, self.num_bases))
+            self.w_comp = nn.Parameter(th.Tensor(self.num_rels, self.num_bases))
             nn.init.xavier_uniform_(self.weight, gain=nn.init.calculate_gain('relu'))
-            if self.num_bases < self.num_rels:
-                nn.init.xavier_uniform_(self.w_comp,
-                                        gain=nn.init.calculate_gain('relu'))
+            #if self.num_bases < self.num_rels:
+                #nn.init.xavier_uniform_(self.w_comp,
+                                        #gain=nn.init.calculate_gain('relu'))
             # message func
             self.message_func = self.basis_message_func
         elif regularizer == "bdd":
@@ -129,6 +130,13 @@ class RelGraphConv(nn.Module):
                 self.num_rels, self.in_feat, self.out_feat)
         else:
             weight = self.weight
+        x = edges.src['h']
+        BB = weight.index_select(0, edges.data['type'])
+        print(x.shape)
+        print(weight.shape)
+        print(BB.shape)
+        while True:
+            pass
 
         msg = utils.bmm_maybe_select(edges.src['h'], weight, edges.data['type'])
         if 'norm' in edges.data:
