@@ -176,14 +176,8 @@ class RelGraphConv1(nn.Module):
         return node_repr
 
 class EntityClassify(BaseRGCN):
-    def create_features(self):
-        features = torch.arange(self.num_nodes)
-        if self.use_cuda:
-            features = features.cuda()
-        return features
-
     def build_input_layer(self):
-        return RelGraphConv1(self.num_nodes, self.h_dim, self.num_rels, "basis",
+        return RelGraphConv1(self.in_dim, self.h_dim, self.num_rels, "basis",
                 self.num_bases, activation=F.relu, self_loop=self.use_self_loop,
                 dropout=self.dropout)
 
@@ -200,8 +194,15 @@ class EntityClassify(BaseRGCN):
 def main(args):
     # load graph data
     #data = load_data(args.dataset, bfs_level=args.bfs_level, relabel=args.relabel)
-    if args.dataset == 'am':
-        data = AM()
+    if args.dataset in ['aifb', 'mutag', 'bgs', 'am']:
+        if args.dataset == 'am':
+            data = AM()
+        elif args.dataset == 'aifb':
+            data = AIFB()
+        elif args.dataset == 'mutag':
+            data = MUTAG()
+        elif args.dataset == 'bgs':
+            data = BGS()
         g = dgl.to_homo(data.graph)
         num_nodes = g.number_of_nodes()
         edge_type = g.edata[dgl.ETYPE]
@@ -210,7 +211,7 @@ def main(args):
         labels = torch.zeros((num_nodes,)).long()
         train_idx = data.train_idx
         test_idx = data.test_idx
-    if args.dataset == 'aminer':
+    elif args.dataset == 'aminer':
         hg = AMINER()
         g = dgl.to_homo(hg)
         num_nodes = g.number_of_nodes()

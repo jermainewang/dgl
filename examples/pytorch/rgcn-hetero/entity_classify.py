@@ -239,6 +239,7 @@ class RelGraphConvHeteroEmbed(nn.Module):
             hs[i] = h
         return hs
 
+IN_DIM=100
 class EntityClassify(nn.Module):
     def __init__(self,
                  g,
@@ -261,10 +262,9 @@ class EntityClassify(nn.Module):
         #self.embed_layer = RelGraphConvHeteroEmbed(
             #self.h_dim, g, activation=F.relu, self_loop=self.use_self_loop,
             #dropout=self.dropout)
-        IN_DIM=100
-        self.embed = nn.ParameterList()
-        for ntype in g.ntypes:
-            self.embed.append(nn.Parameter(th.Tensor(g.number_of_nodes(ntype), IN_DIM)))
+        #self.embed = nn.ParameterList()
+        #for ntype in g.ntypes:
+        #    self.embed.append(nn.Parameter(th.Tensor(g.number_of_nodes(ntype), IN_DIM)))
         # i2h
         self.layers.append(RelGraphConvHetero(
             IN_DIM, self.h_dim, self.rel_names, "basis",
@@ -282,9 +282,9 @@ class EntityClassify(nn.Module):
             self.num_bases, activation=partial(F.softmax, dim=1),
             self_loop=self.use_self_loop))
 
-    def forward(self):
+    def forward(self, h):
         #h = self.embed_layer()
-        h = self.embed
+        #h = self.embed
         for layer in self.layers:
             h = layer(self.g, h)
         return h
@@ -354,9 +354,13 @@ def main(args):
                            num_hidden_layers=args.n_layers - 2,
                            dropout=args.dropout,
                            use_self_loop=args.use_self_loop)
+    
+    feats = [th.randn((g.number_of_nodes(ntype), IN_DIM)) for ntype in g.ntypes]
 
     if use_cuda:
         model.cuda()
+        for i in range(len(feats)):
+            feats[i] = feats[i].cuda()
 
     # optimizer
     optimizer = th.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2norm)
@@ -372,7 +376,7 @@ def main(args):
             t0 = time.time()
             #profiler.start()
         #logits = model(g, feats, edge_type, edge_norm)
-        logits = model()[category_id]
+        logits = model(feats)[category_id]
         loss = F.cross_entropy(logits[train_idx], labels[train_idx])
         print(loss.item())
         loss.backward()

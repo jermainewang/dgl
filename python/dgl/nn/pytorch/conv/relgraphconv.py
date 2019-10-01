@@ -130,14 +130,6 @@ class RelGraphConv(nn.Module):
                 self.num_rels, self.in_feat, self.out_feat)
         else:
             weight = self.weight
-        x = edges.src['h']
-        BB = weight.index_select(0, edges.data['type'])
-        print(x.shape)
-        print(weight.shape)
-        print(BB.shape)
-        while True:
-            pass
-
         msg = utils.bmm_maybe_select(edges.src['h'], weight, edges.data['type'])
         if 'norm' in edges.data:
             msg = msg * edges.data['norm']
