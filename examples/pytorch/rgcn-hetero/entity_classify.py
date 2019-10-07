@@ -17,8 +17,9 @@ from dgl import DGLGraph
 import dgl.function as fn
 from dgl.data.rdf import AIFB, MUTAG, BGS, AM
 
-from utils import ACM
 from aminer import AMINER
+from acm import ACM
+from dblp import DBLP
 
 class RelGraphConvHetero(nn.Module):
     r"""Relational graph convolution layer.
@@ -61,7 +62,7 @@ class RelGraphConvHetero(nn.Module):
         self.num_rels = len(rel_names)
         self.regularizer = regularizer
         self.num_bases = num_bases
-        if self.num_bases is None or self.num_bases > self.num_rels or self.num_bases < 0:
+        if self.num_bases is None or self.num_bases < 0:
             self.num_bases = self.num_rels
         self.bias = bias
         self.activation = activation
@@ -70,13 +71,11 @@ class RelGraphConvHetero(nn.Module):
         if regularizer == "basis":
             # add basis weights
             self.weight = nn.Parameter(th.Tensor(self.num_bases, self.in_feat, self.out_feat))
-            if self.num_bases < self.num_rels:
-                # linear combination coefficients
-                self.w_comp = nn.Parameter(th.Tensor(self.num_rels, self.num_bases))
+            # linear combination coefficients
+            self.w_comp = nn.Parameter(th.Tensor(self.num_rels, self.num_bases))
             nn.init.xavier_uniform_(self.weight, gain=nn.init.calculate_gain('relu'))
-            if self.num_bases < self.num_rels:
-                nn.init.xavier_uniform_(self.w_comp,
-                                        gain=nn.init.calculate_gain('relu'))
+            nn.init.xavier_uniform_(self.w_comp,
+                                    gain=nn.init.calculate_gain('relu'))
         elif regularizer == "bdd":
             raise NotImplementedError('BDD regularizer has not been supported yet.')
             if in_feat % self.num_bases != 0 or out_feat % self.num_bases != 0:
@@ -107,14 +106,11 @@ class RelGraphConvHetero(nn.Module):
 
     def basis_weight(self):
         """Message function for basis regularizer"""
-        if self.num_bases < self.num_rels:
-            # generate all weights from bases
-            weight = self.weight.view(self.num_bases,
-                                      self.in_feat * self.out_feat)
-            weight = th.matmul(self.w_comp, weight).view(
-                self.num_rels, self.in_feat, self.out_feat)
-        else:
-            weight = self.weight
+        # generate all weights from bases
+        weight = self.weight.view(self.num_bases,
+                                  self.in_feat * self.out_feat)
+        weight = th.matmul(self.w_comp, weight).view(
+            self.num_rels, self.in_feat, self.out_feat)
         return {self.rel_names[i] : w.squeeze(0) for i, w in enumerate(th.split(weight, 1, dim=0))}
 
     def bdd_weight(self):
@@ -306,11 +302,13 @@ def main(args):
         train_idx = dataset.train_idx
         test_idx = dataset.test_idx
         labels = dataset.labels
-    elif args.dataset == 'acm':
-        dataset = ACM()
-        assert False
-    elif args.dataset == 'aminer':
-        g = AMINER()
+    elif args.dataset in ['acm', 'dblp', 'aminer']:
+        if args.dataset == 'acm':
+            g = ACM()
+        elif args.dataset == 'dblp':
+            g = DBLP()
+        elif args.dataset == 'aminer':
+            g = AMINER()
         category = 'author'
         num_classes = 8
         num_nodes = g.number_of_nodes(category)
@@ -354,6 +352,7 @@ def main(args):
                            num_hidden_layers=args.n_layers - 2,
                            dropout=args.dropout,
                            use_self_loop=args.use_self_loop)
+    print('#Parameters:', sum([np.prod(p.shape) for p in model.parameters()]))
     
     feats = [th.randn((g.number_of_nodes(ntype), IN_DIM)) for ntype in g.ntypes]
 

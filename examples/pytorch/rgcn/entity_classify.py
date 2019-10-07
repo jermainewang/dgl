@@ -25,6 +25,8 @@ from functools import partial
 
 from model import BaseRGCN
 from aminer import AMINER
+from acm import ACM
+from dblp import DBLP
 
 class RelGraphConv1(nn.Module):
     def __init__(self,
@@ -211,8 +213,13 @@ def main(args):
         labels = torch.zeros((num_nodes,)).long()
         train_idx = data.train_idx
         test_idx = data.test_idx
-    elif args.dataset == 'aminer':
-        hg = AMINER()
+    elif args.dataset in ['acm', 'dblp', 'aminer']:
+        if args.dataset == 'acm':
+            hg = ACM()
+        elif args.dataset == 'dblp':
+            hg = DBLP()
+        elif args.dataset == 'aminer':
+            hg = AMINER()
         g = dgl.to_homo(hg)
         num_nodes = g.number_of_nodes()
         edge_type = g.edata[dgl.ETYPE]
@@ -280,6 +287,7 @@ def main(args):
                            dropout=args.dropout,
                            use_self_loop=args.use_self_loop,
                            use_cuda=use_cuda)
+    print('#Parameters:', sum([np.prod(p.shape) for p in model.parameters()]))
 
     if use_cuda:
         model.cuda()

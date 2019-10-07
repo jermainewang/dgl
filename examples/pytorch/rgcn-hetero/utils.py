@@ -221,28 +221,3 @@ def calc_mrr(embedding, w, test_triplets, hits=[], eval_bz=100):
             avg_count = torch.mean((ranks <= hit).float())
             print("Hits (raw) @ {}: {:.6f}".format(hit, avg_count.item()))
     return mrr.item()
-
-import scipy.io
-import urllib.request
-
-def ACM():
-    data_url = 'https://s3.us-east-2.amazonaws.com/dgl.ai/dataset/ACM.mat'
-    data_file_path = '/tmp/ACM.mat'
-
-    urllib.request.urlretrieve(data_url, data_file_path)
-    data = scipy.io.loadmat(data_file_path)
-    print(list(data.keys()))
-    print(data['PvsC'].shape)
-    print(data['PvsL'].shape)
-    print(data['PvsA'].shape)
-    print(data['PvsP'].shape)
-    print('#A:', len(data['A']))
-    print('#P:', len(data['P']))
-    print('#C:', len(data['C']))
-    print('#F:', len(data['F']))
-    print('#L:', len(data['L']))
-    print('#T:', len(data['T']))
-    print('#V:', len(data['V']))
-    print(data['C'])
-    print(data['T'])
-    print(data['L'])
