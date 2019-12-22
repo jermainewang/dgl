@@ -131,27 +131,33 @@ class GCMCLayer(Block):
             x_u = dot_or_identity(ufeat, self.W_r[rating].data())
             x_i = dot_or_identity(ifeat, self.W_r['rev-%s' % rating].data())
             # left norm and dropout
-            x_u = x_u * self.dropout(graph.nodes['user'].data['cj'])
-            x_i = x_i * self.dropout(graph.nodes['movie'].data['cj'])
+            #x_u = x_u * self.dropout(graph.nodes['user'].data['cj'])
+            #x_i = x_i * self.dropout(graph.nodes['movie'].data['cj'])
+            x_u = self.dropout(x_u)
+            x_i = self.dropout(x_i)
             graph.nodes['user'].data['h%d' % i] = x_u
             graph.nodes['movie'].data['h%d' % i] = x_i
-            funcs[rating] = (fn.copy_u('h%d' % i, 'm'), fn.sum('m', 'h'))
-            funcs['rev-%s' % rating] = (fn.copy_u('h%d' % i, 'm'), fn.sum('m', 'h'))
+            #funcs[rating] = (fn.copy_u('h%d' % i, 'm'), fn.sum('m', 'h'))
+            #funcs['rev-%s' % rating] = (fn.copy_u('h%d' % i, 'm'), fn.sum('m', 'h'))
+            funcs[rating] = (fn.copy_u('h%d' % i, 'm'), fn.mean('m', 'h'))
+            funcs['rev-%s' % rating] = (fn.copy_u('h%d' % i, 'm'), fn.mean('m', 'h'))
         # message passing
         graph.multi_update_all(funcs, self.agg)
         ufeat = graph.nodes['user'].data.pop('h').reshape((num_u, -1))
         ifeat = graph.nodes['movie'].data.pop('h').reshape((num_i, -1))
         # right norm
-        ufeat = ufeat * graph.nodes['user'].data['ci']
-        ifeat = ifeat * graph.nodes['movie'].data['ci']
+        #ufeat = ufeat * graph.nodes['user'].data['ci']
+        #ifeat = ifeat * graph.nodes['movie'].data['ci']
         # fc and non-linear
         ufeat = self.agg_act(ufeat)
         ifeat = self.agg_act(ifeat)
         ufeat = self.dropout(ufeat)
         ifeat = self.dropout(ifeat)
-        ufeat = self.ufc(ufeat)
-        ifeat = self.ifc(ifeat)
-        return self.out_act(ufeat), self.out_act(ifeat)
+        ufeat = self.out_act(self.ufc(ufeat))
+        ifeat = self.out_act(self.ifc(ifeat))
+        #ufeat = ufeat / mx.nd.sqrt((ufeat ** 2).sum(0))
+        #ifeat = ifeat / mx.nd.sqrt((ifeat ** 2).sum(0))
+        return ufeat, ifeat
 
 class BiDecoder(Block):
     r"""Bilinear decoder.
@@ -226,8 +232,14 @@ class BiDecoder(Block):
         return out
 
 def dot_or_identity(A, B):
-    # if A is None, treat as identity matrix
     if A is None:
+        # if A is None, treat as identity matrix
         return B
+    elif len(A.shape) == 1:
+        # if A is an integer vector, use embedding look up
+        C = B[A]
+        #print(C.shape)
+        #print(B.sum(1)[0:10])
+        return C
     else:
         return mx.nd.dot(A, B)

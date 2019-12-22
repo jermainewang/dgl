@@ -4,6 +4,7 @@ import argparse
 import logging
 import random
 import string
+import itertools
 import numpy as np
 import mxnet as mx
 from mxnet import gluon
@@ -47,6 +48,9 @@ def evaluate(args, net, dataset, segment='valid'):
         rating_values = dataset.valid_truths
         enc_graph = dataset.valid_enc_graph
         dec_graph = dataset.valid_dec_graph
+        #rating_values = dataset.train_truths
+        #enc_graph = dataset.train_enc_graph
+        #dec_graph = dataset.train_dec_graph
     elif segment == "test":
         rating_values = dataset.test_truths
         enc_graph = dataset.test_enc_graph
@@ -54,14 +58,63 @@ def evaluate(args, net, dataset, segment='valid'):
     else:
         raise NotImplementedError
 
+    user_ids = np.arange(dataset.train_enc_graph.number_of_nodes('user'))
+    movie_ids = np.arange(dataset.train_enc_graph.number_of_nodes('movie'))
+    if dataset.user_feature is None:
+        enc_graph.nodes['user'].data['feat'] = mx.nd.array(user_ids, dtype=np.int64, ctx=args.ctx)
+    else:
+        enc_graph.nodes['user'].data['feat'] = dataset.user_feature
+
+    if dataset.movie_feature is None:
+        enc_graph.nodes['movie'].data['feat'] = mx.nd.array(movie_ids, dtype=np.int64, ctx=args.ctx)
+    else:
+        enc_graph.nodes['movie'].data['feat'] = dataset.movie_feature
+    dec_graph.edata['rating'] = rating_values
+
+    user_ids = np.arange(enc_graph.number_of_nodes('user'))
+    movie_ids = np.arange(enc_graph.number_of_nodes('movie'))
+    user_feature = mx.nd.array(user_ids, dtype=np.int64, ctx=args.ctx)
+    movie_feature = mx.nd.array(movie_ids, dtype=np.int64, ctx=args.ctx)
+
+    nchunks = int(1 / 0.50)  # ratio
+    user_chunk_size = (len(user_ids) + nchunks) // nchunks
+    movie_chunk_size = (len(movie_ids) + nchunks) // nchunks
+
+    np.random.shuffle(user_ids)
+    np.random.shuffle(movie_ids)
+    valid_count_rmse = 0
+    valid_count_num = 0
+    for i, j in itertools.product(range(nchunks), range(nchunks)):
+        users = mx.nd.array(user_ids[i * user_chunk_size : (i + 1) * user_chunk_size], dtype=np.int64)
+        movies = mx.nd.array(movie_ids[j * movie_chunk_size : (j + 1) * movie_chunk_size], dtype=np.int64)
+        enc_sg = enc_graph.subgraph({'user' : users, 'movie' : movies})
+        dec_sg = dec_graph.subgraph({'user' : users, 'movie' : movies})
+        user_feat = enc_sg.nodes['user'].data['feat']
+        movie_feat = enc_sg.nodes['movie'].data['feat']
+        gt_ratings = dec_sg.edata['rating']
+
+        with mx.autograd.predict_mode():
+            pred_ratings = net(enc_sg, dec_sg,
+                               user_feat, movie_feat)
+            real_pred_ratings = (mx.nd.softmax(pred_ratings, axis=1) *
+                                 nd_possible_rating_values.reshape((1, -1))).sum(axis=1)
+            rmse = mx.nd.square(real_pred_ratings - gt_ratings).sum()
+            #print('>>>current rmse', np.sqrt(mx.nd.square(real_pred_ratings - gt_ratings).mean().asscalar()), pred_ratings.shape[0])
+            valid_count_rmse += rmse.asscalar()
+            valid_count_num += pred_ratings.shape[0]
+    rmse = np.sqrt(valid_count_rmse/valid_count_num)
+    '''
     # Evaluate RMSE
     with mx.autograd.predict_mode():
         pred_ratings = net(enc_graph, dec_graph,
                            dataset.user_feature, dataset.movie_feature)
+                           #user_feature, movie_feature)
     real_pred_ratings = (mx.nd.softmax(pred_ratings, axis=1) *
                          nd_possible_rating_values.reshape((1, -1))).sum(axis=1)
+    #print('>>>sum2:', mx.nd.square(real_pred_ratings - rating_values).sum())
     rmse = mx.nd.square(real_pred_ratings - rating_values).mean().asscalar()
     rmse = np.sqrt(rmse)
+    '''
     return rmse
 
 def train(args):
@@ -81,7 +134,7 @@ def train(args):
     nd_possible_rating_values = mx.nd.array(dataset.possible_rating_values, ctx=args.ctx, dtype=np.float32)
     rating_loss_net = gluon.loss.SoftmaxCELoss()
     rating_loss_net.hybridize()
-    trainer = gluon.Trainer(net.collect_params(), args.train_optimizer, {'learning_rate': args.train_lr, 'wd': 1e-6})
+    trainer = gluon.Trainer(net.collect_params(), args.train_optimizer, {'learning_rate': args.train_lr, 'wd': 0.})
     print("Loading network finished ...\n")
 
     ### perpare training data
@@ -105,21 +158,79 @@ def train(args):
     count_num = 0
     count_loss = 0
 
+    ### make mini-batches
+    user_ids = np.arange(dataset.train_enc_graph.number_of_nodes('user'))
+    movie_ids = np.arange(dataset.train_enc_graph.number_of_nodes('movie'))
+    if dataset.user_feature is None:
+        dataset.train_enc_graph.nodes['user'].data['feat'] = mx.nd.array(user_ids, dtype=np.int64, ctx=args.ctx)
+    else:
+        dataset.train_enc_graph.nodes['user'].data['feat'] = dataset.user_feature
+
+    if dataset.movie_feature is None:
+        dataset.train_enc_graph.nodes['movie'].data['feat'] = mx.nd.array(movie_ids, dtype=np.int64, ctx=args.ctx)
+    else:
+        dataset.train_enc_graph.nodes['movie'].data['feat'] = dataset.movie_feature
+    dataset.train_dec_graph.edata['gt'] = train_gt_labels
+    dataset.train_dec_graph.edata['rating'] = train_gt_ratings
+    print('#Users:', len(user_ids))
+    print('#Movies:', len(movie_ids))
+    nchunks = int(1 / 0.50)  # ratio
+    user_chunk_size = (len(user_ids) + nchunks) // nchunks
+    movie_chunk_size = (len(movie_ids) + nchunks) // nchunks
+
     print("Start training ...")
     dur = []
     for iter_idx in range(1, args.train_max_iter):
         if iter_idx > 3:
             t0 = time.time()
-        with mx.autograd.record():
-            pred_ratings = net(dataset.train_enc_graph, dataset.train_dec_graph,
-                               dataset.user_feature, dataset.movie_feature)
-            loss = rating_loss_net(pred_ratings, train_gt_labels).mean()
-            loss.backward()
 
-        count_loss += loss.asscalar()
-        gnorm = params_clip_global_norm(net.collect_params(), args.train_grad_clip, args.ctx)
-        avg_gnorm += gnorm
-        trainer.step(1.0)
+        np.random.shuffle(user_ids)
+        np.random.shuffle(movie_ids)
+        for i, j in itertools.product(range(nchunks), range(nchunks)):
+            users = mx.nd.array(user_ids[i * user_chunk_size : (i + 1) * user_chunk_size], dtype=np.int64)
+            movies = mx.nd.array(movie_ids[j * movie_chunk_size : (j + 1) * movie_chunk_size], dtype=np.int64)
+            enc_graph = dataset.train_enc_graph.subgraph({'user' : users, 'movie' : movies})
+            dec_graph = dataset.train_dec_graph.subgraph({'user' : users, 'movie' : movies})
+            user_feat = enc_graph.nodes['user'].data['feat']
+            movie_feat = enc_graph.nodes['movie'].data['feat']
+            gt_labels = dec_graph.edata['gt']
+            gt_ratings = dec_graph.edata['rating']
+
+            #print('>>>>>>>>>>>>>>>>')
+            #for i, rating in enumerate(args.rating_vals):
+                #rating = str(rating)
+                #print(enc_graph.number_of_edges(rating))
+                #print(enc_graph.number_of_edges('rev-%s' % rating))
+            #print(i, j, len(gt_labels))#, users[0:5], movies[0:5])
+            #print(len(users))
+            #print(len(movies))
+            #print(gt_labels.shape)
+            with mx.autograd.record():
+                pred_ratings = net(enc_graph, dec_graph,
+                                   user_feat, movie_feat)
+                loss = rating_loss_net(pred_ratings, gt_labels).mean()
+                loss.backward()
+
+            count_loss += loss.asscalar()
+            gnorm = params_clip_global_norm(net.collect_params(), args.train_grad_clip, args.ctx)
+            avg_gnorm += gnorm
+            trainer.step(1.0)
+
+            real_pred_ratings = (mx.nd.softmax(pred_ratings, axis=1) *
+                                 nd_possible_rating_values.reshape((1, -1))).sum(axis=1)
+            rmse = mx.nd.square(real_pred_ratings - gt_ratings).sum()
+            #print('>>>current rmse', np.sqrt(mx.nd.square(real_pred_ratings - gt_ratings).mean().asscalar()), pred_ratings.shape[0])
+            count_rmse += rmse.asscalar()
+            count_num += pred_ratings.shape[0]
+
+        #print(count_num)
+
+        #with mx.autograd.record():
+        #    pred_ratings = net(dataset.train_enc_graph, dataset.train_dec_graph,
+        #                       dataset.user_feature, dataset.movie_feature)
+        #    loss = rating_loss_net(pred_ratings, train_gt_labels).mean()
+        #    loss.backward()
+
         if iter_idx > 3:
             dur.append(time.time() - t0)
 
@@ -127,18 +238,12 @@ def train(args):
             print("Total #Param of net: %d" % (gluon_total_param_num(net)))
             print(gluon_net_info(net, save_path=os.path.join(args.save_dir, 'net%d.txt' % args.save_id)))
 
-        real_pred_ratings = (mx.nd.softmax(pred_ratings, axis=1) *
-                             nd_possible_rating_values.reshape((1, -1))).sum(axis=1)
-        rmse = mx.nd.square(real_pred_ratings - train_gt_ratings).sum()
-        count_rmse += rmse.asscalar()
-        count_num += pred_ratings.shape[0]
-
         if iter_idx % args.train_log_interval == 0:
             train_loss_logger.log(iter=iter_idx,
-                                  loss=count_loss/(iter_idx+1), rmse=count_rmse/count_num)
+                                  loss=count_loss/(iter_idx+1)/nchunks/nchunks, rmse=np.sqrt(count_rmse/count_num))
             logging_str = "Iter={}, gnorm={:.3f}, loss={:.4f}, rmse={:.4f}, time={:.4f}".format(
                 iter_idx, avg_gnorm/args.train_log_interval,
-                count_loss/iter_idx, count_rmse/count_num,
+                count_loss/iter_idx/nchunks/nchunks, np.sqrt(count_rmse/count_num),
                 np.average(dur))
             avg_gnorm = 0
             count_rmse = 0
