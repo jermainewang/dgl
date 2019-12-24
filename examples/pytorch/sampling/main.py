@@ -9,21 +9,21 @@ import time
 import argparse
 from dgl.data import RedditDataset
 
-
-class NodeUpdate(nn.Module):
-    def __init__(self, in_feats, out_feats, activation=None):
-        super(NodeUpdate, self).__init__()
-        self.linear = nn.Linear(in_feats, out_feats)
-        self.activation = activation
-
-    def forward(self, nodes):
-        h = nodes.data['h']
-        h = self.linear(h)
-        if self.activation is not None:
-            h = self.activation(h)
-        return {'h': h} 
-
 class GCNSampling(nn.Module):
+
+    class NodeUpdate(nn.Module):
+        def __init__(self, in_feats, out_feats, activation=None):
+            super(NodeUpdate, self).__init__()
+            self.linear = nn.Linear(in_feats, out_feats)
+            self.activation = activation
+
+        def forward(self, nodes):
+            h = nodes.data['h']
+            h = self.linear(h)
+            if self.activation is not None:
+                h = self.activation(h)
+            return {'h': h} 
+
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -53,6 +53,53 @@ class GCNSampling(nn.Module):
             h = self.dropout(h)
             nf.layers[i].data['h'] = h
             nf.block_compute(i, fn.copy_u('h', 'm'), fn.mean('m', 'h'), layer)
+            h = nf.layers[i+1].data['h']
+        return h
+
+class GraphSAGESampling(nn.Module):
+
+    class NodeUpdate(nn.Module):
+        def __init__(self, in_feats, out_feats, activation=None):
+            super(NodeUpdate, self).__init__()
+            self.linear = nn.Linear(in_feats, out_feats)
+            self.activation = activation
+
+        def forward(self, nodes):
+            h = nodes.data['h']
+            h = self.linear(h)
+            if self.activation is not None:
+                h = self.activation(h)
+            return {'h': h} 
+
+    def __init__(self,
+                 in_feats,
+                 n_hidden,
+                 n_classes,
+                 n_layers,
+                 activation,
+                 dropout,
+                 **kwargs):
+        super(GCNSampling, self).__init__(**kwargs)
+        self.n_layers = n_layers
+        self.dropout = nn.Dropout(dropout)
+        self.layers = nn.ModuleList()
+        # input layer
+        self.layers.append(
+            NodeUpdate(in_feats * 2, n_hidden, activation))
+        # hidden layers
+        for i in range(1, n_layers - 1):
+            self.layers.append(
+                NodeUpdate(n_hidden * 2, n_hidden, activation))
+        # output layer
+        self.layers.append(
+            NodeUpdate(n_hidden * 2, n_classes))
+
+    def forward(self, nf):
+        h = nf.layers[0].data['features']
+        for i, layer in enumerate(self.layers):
+            h = self.dropout(h)
+            nf.layers[i].data['h'] = h
+            nf.block_compute(i, fn.copy_u('h', 'm'), fn.mean('m', 'h_n'), layer)
             h = nf.layers[i+1].data['h']
         return h
 
@@ -111,18 +158,19 @@ def run(proc_id, n_gpus, args, devices):
         num_hops=args.num_layers,
         seed_nodes=train_nid,
         num_workers=args.num_workers)
-    val_sampler = dgl.contrib.sampling.NeighborSampler(
-        g, len(val_nid), 10000,
-        neighbor_type='in',
-        shuffle=False,
-        num_hops=args.num_layers,
-        seed_nodes=val_nid,
-        num_workers=1)
 
-    # Create validation batch (only on GPU 0)
-    val_nf = list(val_sampler)[0]
-    val_nf.copy_from_parent()
-    val_nf.layers[0].data['features'] = val_nf.layers[0].data['features'].to(0)
+    if proc_id == 0:
+        val_sampler = dgl.contrib.sampling.NeighborSampler(
+            g, len(val_nid), 10000,
+            neighbor_type='in',
+            shuffle=False,
+            num_hops=args.num_layers,
+            seed_nodes=val_nid,
+            num_workers=1)
+        # Create validation batch (only on GPU 0)
+        val_nf = list(val_sampler)[0]
+        val_nf.copy_from_parent()
+        val_nf.layers[0].data['features'] = val_nf.layers[0].data['features'].to(0)
 
     # Define model and optimizer
     model = GCNSampling(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, dropout)
