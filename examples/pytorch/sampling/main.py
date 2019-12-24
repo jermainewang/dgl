@@ -9,21 +9,20 @@ import time
 import argparse
 from dgl.data import RedditDataset
 
+class GCNNodeUpdate(nn.Module):
+    def __init__(self, in_feats, out_feats, activation=None):
+        super(GCNNodeUpdate, self).__init__()
+        self.linear = nn.Linear(in_feats, out_feats)
+        self.activation = activation
+
+    def forward(self, nodes):
+        h = nodes.data['h']
+        h = self.linear(h)
+        if self.activation is not None:
+            h = self.activation(h)
+        return {'h': h} 
+
 class GCNSampling(nn.Module):
-
-    class NodeUpdate(nn.Module):
-        def __init__(self, in_feats, out_feats, activation=None):
-            super(NodeUpdate, self).__init__()
-            self.linear = nn.Linear(in_feats, out_feats)
-            self.activation = activation
-
-        def forward(self, nodes):
-            h = nodes.data['h']
-            h = self.linear(h)
-            if self.activation is not None:
-                h = self.activation(h)
-            return {'h': h} 
-
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -38,14 +37,14 @@ class GCNSampling(nn.Module):
         self.layers = nn.ModuleList()
         # input layer
         self.layers.append(
-            NodeUpdate(in_feats, n_hidden, activation))
+            GCNNodeUpdate(in_feats, n_hidden, activation))
         # hidden layers
         for i in range(1, n_layers - 1):
             self.layers.append(
-                NodeUpdate(n_hidden, n_hidden, activation))
+                GCNNodeUpdate(n_hidden, n_hidden, activation))
         # output layer
         self.layers.append(
-            NodeUpdate(n_hidden, n_classes))
+            GCNNodeUpdate(n_hidden, n_classes))
 
     def forward(self, nf):
         h = nf.layers[0].data['features']
@@ -56,21 +55,20 @@ class GCNSampling(nn.Module):
             h = nf.layers[i+1].data['h']
         return h
 
-class GraphSAGESampling(nn.Module):
+class SAGENodeUpdate(nn.Module):
+    def __init__(self, in_feats, out_feats, activation=None):
+        super(SAGENodeUpdate, self).__init__()
+        self.linear = nn.Linear(in_feats, out_feats)
+        self.activation = activation
 
-    class NodeUpdate(nn.Module):
-        def __init__(self, in_feats, out_feats, activation=None):
-            super(NodeUpdate, self).__init__()
-            self.linear = nn.Linear(in_feats, out_feats)
-            self.activation = activation
+    def forward(self, nodes):
+        h = nodes.data['h']
+        h = self.linear(h)
+        if self.activation is not None:
+            h = self.activation(h)
+        return {'h': h} 
 
-        def forward(self, nodes):
-            h = nodes.data['h']
-            h = self.linear(h)
-            if self.activation is not None:
-                h = self.activation(h)
-            return {'h': h} 
-
+class SAGESampling(nn.Module):
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -79,20 +77,20 @@ class GraphSAGESampling(nn.Module):
                  activation,
                  dropout,
                  **kwargs):
-        super(GCNSampling, self).__init__(**kwargs)
+        super(SAGESampling, self).__init__(**kwargs)
         self.n_layers = n_layers
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList()
         # input layer
         self.layers.append(
-            NodeUpdate(in_feats * 2, n_hidden, activation))
+            SAGENodeUpdate(in_feats * 2, n_hidden, activation))
         # hidden layers
         for i in range(1, n_layers - 1):
             self.layers.append(
-                NodeUpdate(n_hidden * 2, n_hidden, activation))
+                SAGENodeUpdate(n_hidden * 2, n_hidden, activation))
         # output layer
         self.layers.append(
-            NodeUpdate(n_hidden * 2, n_classes))
+            SAGENodeUpdate(n_hidden * 2, n_classes))
 
     def forward(self, nf):
         h = nf.layers[0].data['features']
