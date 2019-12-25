@@ -299,9 +299,12 @@ def run(proc_id, n_gpus, args, devices):
 
     # Training loop
     avg = 0
+    iter_tput = []
     for epoch in range(args.num_epochs):
         tic = time.time()
         for step, nf in enumerate(sampler):
+            if proc_id == 0:
+                tic_step = time.time()
             nf.copy_from_parent()
             for i in range(nf.num_layers):
                 nf.layers[i].data['features'] = nf.layers[i].data['features'].to(dev_id)
@@ -320,13 +323,15 @@ def run(proc_id, n_gpus, args, devices):
                         th.distributed.all_reduce(param.grad.data,
                                                   op=th.distributed.ReduceOp.SUM)
                         param.grad.data /= n_gpus
-            if n_gpus > 1:
-                th.distributed.barrier()
+            #if n_gpus > 1:
+                #th.distributed.barrier()
             optimizer.step()
+            if proc_id == 0:
+                iter_tput.append(len(batch_nids) * n_gpus / (time.time() - tic_step))
             if step % args.log_every == 0 and proc_id == 0:
                 acc = compute_acc(pred, batch_labels)
-                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f}'.format(
-                    epoch, step, loss.item(), acc.item()))
+                print('Epoch {:05d} | Step {:05d} | Loss {:.4f} | Train Acc {:.4f} | Speed (samples/sec) {:.4f}'.format(
+                    epoch, step, loss.item(), acc.item(), np.mean(iter_tput[3:])))
         if n_gpus > 1:
             th.distributed.barrier()
         toc = time.time()
