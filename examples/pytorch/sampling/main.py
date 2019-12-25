@@ -337,7 +337,7 @@ def run(proc_id, n_gpus, args, devices):
         toc = time.time()
         if proc_id == 0:
             print('Epoch Time(s): {:.4f}'.format(toc - tic))
-            if epoch >= 10:
+            if epoch >= 5:
                 avg += toc - tic
             if epoch % args.eval_every == 0 and epoch != 0:
                 eval_acc = evaluate(model, val_nf, labels[val_nid].to(dev_id))
@@ -346,7 +346,7 @@ def run(proc_id, n_gpus, args, devices):
     if n_gpus > 1:
         th.distributed.barrier()
     if proc_id == 0:
-        print('avg time: {}'.format(avg / (epoch - 9)))
+        print('Avg epoch time: {}'.format(avg / (epoch - 4)))
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("multi-gpu training")
