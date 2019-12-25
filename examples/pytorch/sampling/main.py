@@ -331,10 +331,12 @@ def run(proc_id, n_gpus, args, devices):
             th.distributed.barrier()
         toc = time.time()
         if proc_id == 0:
-            eval_acc = evaluate(model, val_nf, labels[val_nid].to(dev_id))
-            print('Epoch Time(s): {:.4f} | Eval Acc {:.4f}'.format(toc - tic, eval_acc))
-        if epoch >= 10:
-            avg += toc - tic
+            print('Epoch Time(s): {:.4f}'.format(toc - tic))
+            if epoch >= 10:
+                avg += toc - tic
+            if epoch % args.eval_every == 0 and epoch != 0:
+                eval_acc = evaluate(model, val_nf, labels[val_nid].to(dev_id))
+                print('Eval Acc {:.4f}'.format(eval_acc))
 
     if n_gpus > 1:
         th.distributed.barrier()
@@ -353,6 +355,7 @@ if __name__ == '__main__':
     argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--prefetch', action='store_true')
     argparser.add_argument('--log-every', type=int, default=20)
+    argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--lr', type=float, default=0.03)
     args = argparser.parse_args()
     
