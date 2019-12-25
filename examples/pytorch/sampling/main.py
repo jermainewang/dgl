@@ -9,6 +9,10 @@ import time
 import argparse
 from dgl.data import RedditDataset
 
+##################################################################################
+# GCN using mean reducer
+##################################################################################
+
 class GCNNodeUpdate(nn.Module):
     def __init__(self, in_feats, out_feats, activation=None):
         super(GCNNodeUpdate, self).__init__()
@@ -22,7 +26,7 @@ class GCNNodeUpdate(nn.Module):
             h = self.activation(h)
         return {'h': h} 
 
-class GCNSampling(nn.Module):
+class GCN(nn.Module):
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -31,7 +35,7 @@ class GCNSampling(nn.Module):
                  activation,
                  dropout,
                  **kwargs):
-        super(GCNSampling, self).__init__(**kwargs)
+        super(GCN, self).__init__(**kwargs)
         self.n_layers = n_layers
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList()
@@ -55,6 +59,10 @@ class GCNSampling(nn.Module):
             h = nf.layers[i+1].data['h']
         return h
 
+##################################################################################
+# GraphSAGE
+##################################################################################
+
 class SAGENodeUpdate(nn.Module):
     def __init__(self, in_feats, out_feats, activation=None):
         super(SAGENodeUpdate, self).__init__()
@@ -62,13 +70,13 @@ class SAGENodeUpdate(nn.Module):
         self.activation = activation
 
     def forward(self, nodes):
-        h = nodes.data['h']
+        h = th.cat([nodes.data['h'], nodes.data['h_n']], dim=1)
         h = self.linear(h)
         if self.activation is not None:
             h = self.activation(h)
-        return {'h': h} 
+        return {'h_new': h}
 
-class SAGESampling(nn.Module):
+class SAGE(nn.Module):
     def __init__(self,
                  in_feats,
                  n_hidden,
@@ -77,7 +85,7 @@ class SAGESampling(nn.Module):
                  activation,
                  dropout,
                  **kwargs):
-        super(SAGESampling, self).__init__(**kwargs)
+        super(SAGE, self).__init__(**kwargs)
         self.n_layers = n_layers
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList()
@@ -93,13 +101,117 @@ class SAGESampling(nn.Module):
             SAGENodeUpdate(n_hidden * 2, n_classes))
 
     def forward(self, nf):
-        h = nf.layers[0].data['features']
-        for i, layer in enumerate(self.layers):
-            h = self.dropout(h)
-            nf.layers[i].data['h'] = h
-            nf.block_compute(i, fn.copy_u('h', 'm'), fn.mean('m', 'h_n'), layer)
-            h = nf.layers[i+1].data['h']
-        return h
+        for i in range(nf.num_layers):
+            nf.layers[i].data['h'] = nf.layers[i].data['features']
+            nf.layers[i].data['h_new'] = nf.layers[i].data['features']
+        for i in range(len(self.layers)):
+            for j in range(i, len(self.layers)):
+                nf.layers[j].data['h'] = self.dropout(nf.layers[j].data['h'])
+                nf.block_compute(j, fn.copy_u('h', 'm'), fn.mean('m', 'h_n'), self.layers[i])
+            for j in range(i, len(self.layers)):
+                nf.layers[j+1].data['h'] = nf.layers[j+1].data['h_new']
+        return nf.layers[-1].data['h']
+
+##################################################################################
+# GAT
+##################################################################################
+
+class GATLayer(nn.Module):
+    def __init__(self,
+                 in_feats,
+                 out_feats,
+                 num_heads,
+                 activation=None):
+        super(GATLayer, self).__init__()
+        self.num_heads = num_heads
+        self.out_feats = out_feats
+        self.fc = nn.Linear(in_feats, out_feats * num_heads, bias=False)
+        self.attn_l = nn.Parameter(th.FloatTensor(size=(1, num_heads, out_feats)))
+        self.attn_r = nn.Parameter(th.FloatTensor(size=(1, num_heads, out_feats)))
+        self.leaky_relu = nn.LeakyReLU(0.2)
+        self.activation = activation
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        """Reinitialize learnable parameters."""
+        gain = nn.init.calculate_gain('relu')
+        nn.init.xavier_normal_(self.fc.weight, gain=gain)
+        nn.init.xavier_normal_(self.attn_l, gain=gain)
+        nn.init.xavier_normal_(self.attn_r, gain=gain)
+
+    def edge_softmax(self, nf, score, bid):
+        nf.blocks[bid].data['s'] = score
+        nf.block_compute(bid, fn.copy_e('s', 'm'), fn.max('m', 'smax'))
+        nf.apply_block(bid, fn.e_sub_v('s', 'smax', 'out'))
+        nf.blocks[bid].data['out'] = th.exp(nf.blocks[bid].data['out'])
+        nf.block_compute(bid, fn.copy_e('out', 'm'), fn.sum('m', 'out_sum'))
+        nf.apply_block(bid, fn.e_div_v('out', 'out_sum', 'out'))
+        return nf.blocks[bid].data['out']
+
+    def forward(self, nf, lid):
+        l_ft = nf.layers[lid].data['h'].flatten(1)
+        l_ft = self.fc(l_ft).view(-1, self.num_heads, self.out_feats)
+        el = (l_ft * self.attn_l).sum(dim=-1).unsqueeze(-1)
+        nf.layers[lid].data.update({'ft': l_ft, 'el': el})
+
+        r_ft = nf.layers[lid+1].data['h'].flatten(1)
+        r_ft = self.fc(r_ft).view(-1, self.num_heads, self.out_feats)
+        er = (r_ft * self.attn_r).sum(dim=-1).unsqueeze(-1)
+        nf.layers[lid+1].data.update({'er' : er})
+
+        # compute edge attention
+        nf.apply_block(lid, fn.u_add_v('el', 'er', 'e'))
+        e = self.leaky_relu(nf.blocks[lid].data.pop('e'))
+        # compute softmax
+        nf.blocks[lid].data['a'] = self.edge_softmax(nf, e, lid)
+
+        # message passing
+        nf.block_compute(lid, fn.u_mul_e('ft', 'a', 'm'), fn.sum('m', 'ft'))
+        rst = nf.layers[lid+1].data['ft']
+
+        if self.activation:
+            rst = self.activation(rst)
+        return rst
+
+class GAT(nn.Module):
+    def __init__(self,
+                 in_feats,
+                 n_hidden,
+                 n_classes,
+                 n_layers,
+                 num_heads,
+                 activation,
+                 dropout,
+                 **kwargs):
+        super(GAT, self).__init__(**kwargs)
+        self.n_layers = n_layers
+        self.dropout = nn.Dropout(dropout)
+        self.layers = nn.ModuleList()
+        # input layer
+        self.layers.append(
+            GATLayer(in_feats, n_hidden, num_heads, activation))
+        # hidden layers
+        for i in range(1, n_layers - 1):
+            self.layers.append(
+                GATLayer(n_hidden * num_heads, n_hidden, num_heads, activation))
+        # output layer
+        self.layers.append(
+            GATLayer(n_hidden * num_heads, n_classes, num_heads))
+
+    def forward(self, nf):
+        for i in range(nf.num_layers):
+            nf.layers[i].data['h'] = nf.layers[i].data['features']
+            nf.layers[i].data['h_new'] = nf.layers[i].data['features']
+        for i in range(len(self.layers)):
+            for j in range(i, len(self.layers)):
+                nf.layers[j].data['h'] = self.dropout(nf.layers[j].data['h'])
+            for j in range(i, len(self.layers)):
+                h_new = self.layers[i](nf, j)
+                nf.layers[j+1].data['h_new'] = h_new
+            for j in range(i, len(self.layers)):
+                nf.layers[j+1].data['h'] = nf.layers[j+1].data['h_new']
+        h = nf.layers[-1].data['h']
+        return h.mean(1)
 
 def compute_acc(pred, labels):
     return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
@@ -168,14 +280,22 @@ def run(proc_id, n_gpus, args, devices):
         # Create validation batch (only on GPU 0)
         val_nf = list(val_sampler)[0]
         val_nf.copy_from_parent()
-        val_nf.layers[0].data['features'] = val_nf.layers[0].data['features'].to(0)
+        for i in range(val_nf.num_layers):
+            val_nf.layers[i].data['features'] = val_nf.layers[i].data['features'].to(0)
 
     # Define model and optimizer
-    model = GCNSampling(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, dropout)
+    if args.model == 'gcn':
+        model = GCN(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, dropout)
+    elif args.model == 'sage':
+        model = SAGE(in_feats, args.num_hidden, n_classes, args.num_layers, F.relu, dropout)
+    elif args.model == 'gat':
+        model = GAT(in_feats, args.num_hidden, n_classes, args.num_layers, 4, F.relu, dropout)
+    else:
+        raise ValueError('Unknown model name:', args.model)
     model = model.to(dev_id)
     loss_fcn = nn.CrossEntropyLoss()
     loss_fcn = loss_fcn.to(dev_id)
-    optimizer = optim.Adam(model.parameters(), lr=0.03)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     # Training loop
     avg = 0
@@ -183,8 +303,8 @@ def run(proc_id, n_gpus, args, devices):
         tic = time.time()
         for step, nf in enumerate(sampler):
             nf.copy_from_parent()
-            nf.layers[0].data['features'] =\
-                nf.layers[0].data['features'].to(dev_id)
+            for i in range(nf.num_layers):
+                nf.layers[i].data['features'] = nf.layers[i].data['features'].to(dev_id)
             # forward
             pred = model(nf)
             batch_nids = nf.layer_parent_nid(-1).to(dev_id)
@@ -224,6 +344,7 @@ def run(proc_id, n_gpus, args, devices):
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("multi-gpu training")
     argparser.add_argument('--gpu', type=str, default='0')
+    argparser.add_argument('--model', type=str, default='gcn')
     argparser.add_argument('--num-epochs', type=int, default=20)
     argparser.add_argument('--num-workers', type=int, default=1)
     argparser.add_argument('--num-hidden', type=int, default=64)
@@ -232,6 +353,7 @@ if __name__ == '__main__':
     argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--prefetch', action='store_true')
     argparser.add_argument('--log-every', type=int, default=20)
+    argparser.add_argument('--lr', type=float, default=0.03)
     args = argparser.parse_args()
     
     devices = list(map(int, args.gpu.split(',')))
