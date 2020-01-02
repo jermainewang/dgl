@@ -11,6 +11,7 @@ from ..._ffi.object import register_object, ObjectBase
 from ..._ffi.ndarray import empty
 from ... import utils
 from ...nodeflow import NodeFlow
+from ...graph import DGLGraph
 from ... import backend as F
 from ... import subgraph
 
@@ -785,5 +786,18 @@ def create_full_nodeflow(g, num_layers, add_self_loop=False):
     sampler = NeighborSampler(g, batch_size, expand_factor,
         num_layers, add_self_loop=add_self_loop)
     return next(iter(sampler))
+
+def sample_neighbors(g, nodes, fanout, edge_dir='in', p=None, replace=True):
+    nodes = utils.toindex(nodes)
+    if p is None:
+        p = F.tensor([], F.float32)
+    gidx = _CAPI_NeighborSamplingNew(
+        g._graph,
+        nodes.todgltensor(),
+        int(fanout),
+        edge_dir,
+        F.zerocopy_to_dgl_ndarray(p),
+        replace)
+    return DGLGraph(gidx)
 
 _init_api('dgl.sampling', __name__)
