@@ -2,7 +2,7 @@ import dgl
 from dgl.data import RedditDataset
 import torch as th
 import numpy as np
-from dgl.contrib.sampling import sample_neighbors, NeighborSampler
+from dgl.contrib.sampling import sample_neighbors, NeighborSampler, compact_graphs
 import time
 
 data = RedditDataset(self_loop=True)
@@ -23,7 +23,8 @@ for i in range(100):
     f1 = sample_neighbors(g, seed_nodes, 10)
     u, _ = f1.edges(form='uv')
     f2 = sample_neighbors(g, th.unique(u), 10)
-    #print(i, f2.number_of_edges())
+    f1, f2 = compact_graphs([f1, f2])
+    #print(i, f2.number_of_nodes(), f2.number_of_edges())
 print('Time:', time.time() - t)
 
 ##################### Test 2: Use the old sampler data loader ####################

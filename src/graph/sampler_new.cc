@@ -62,21 +62,6 @@ DGL_REGISTER_GLOBAL("sampling._CAPI_NeighborSamplingNew")
     CHECK_EQ(probability->ctx.device_type, kDLCPU)
       << "NeighborSampling only support CPU sampling";
 
-    /*int L = 1000;
-    std::vector<int> vec(L, 0);
-#pragma omp parallel for
-    for (int64_t i = 0; i < L; ++i) {
-      for (int64_t j = 0; j < 1000000; ++j) {
-        for (int64_t jj = 0; jj < 10000; ++j) {
-          vec[i] += j;
-        }
-      }
-    }
-
-    for (int64_t i = L - 1; i > L - 10; --i) {
-      LOG(INFO) << vec[i];
-    }*/
-
     GraphPtr ret;
 
     ATEN_FLOAT_TYPE_SWITCH(
@@ -101,6 +86,56 @@ DGL_REGISTER_GLOBAL("sampling._CAPI_NeighborSamplingNew")
     });
 
     *rv = GraphRef(ret);
+  });
+
+List<GraphRef> CompactGraphs(List<GraphRef> graphs) {
+  // estimate the number of buckets in the hash
+  int64_t est_size = 0;
+  for (size_t i = 0; i < graphs.size(); ++i)
+    est_size += graphs[i]->NumEdges();
+  std::unordered_map<dgl_id_t, dgl_id_t> hash(est_size);
+  std::vector<IdArray> newsrc(graphs.size()), newdst(graphs.size());
+  for (size_t i = 0; i < graphs.size(); ++i) {
+    const auto& earr = graphs[i]->Edges();
+    const int64_t len = earr.src->shape[0];
+    newsrc[i] = aten::NewIdArray(len);
+    newdst[i] = aten::NewIdArray(len);
+    const dgl_id_t* srcdata = static_cast<dgl_id_t*>(earr.src->data);
+    const dgl_id_t* dstdata = static_cast<dgl_id_t*>(earr.dst->data);
+    dgl_id_t* newsrcdata = static_cast<dgl_id_t*>(newsrc[i]->data);
+    dgl_id_t* newdstdata = static_cast<dgl_id_t*>(newdst[i]->data);
+    for (auto j = 0; j < len; ++j) {
+      auto it = hash.find(srcdata[j]);
+      if (it == hash.end()) {
+        const int64_t newid = hash.size();
+        hash[srcdata[j]] = newid;
+        newsrcdata[j] = newid;
+      } else {
+        newsrcdata[j] = it->second;
+      }
+      it = hash.find(dstdata[j]);
+      if (it == hash.end()) {
+        const int64_t newid = hash.size();
+        hash[dstdata[j]] = newid;
+        newdstdata[j] = newid;
+      } else {
+        newdstdata[j] = it->second;
+      }
+    }
+  }
+  const int64_t num_nodes = hash.size();
+  std::vector<GraphRef> ret(graphs.size());
+  for (size_t i = 0; i < graphs.size(); ++i) {
+    ret[i] = GraphRef(ImmutableGraph::CreateFromCOO(num_nodes, newsrc[i], newdst[i]));
+  }
+  return List<GraphRef>(ret);
+}
+
+DGL_REGISTER_GLOBAL("sampling._CAPI_CompactGraphs")
+.set_body([] (DGLArgs args, DGLRetValue* rv) {
+    // arguments
+    const List<GraphRef> graphs = args[0];
+    *rv = CompactGraphs(graphs);
   });
 
 }  // namespace dgl

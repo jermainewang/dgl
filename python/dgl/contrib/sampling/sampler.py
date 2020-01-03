@@ -800,4 +800,9 @@ def sample_neighbors(g, nodes, fanout, edge_dir='in', p=None, replace=True):
         replace)
     return DGLGraph(gidx)
 
+def compact_graphs(graphs):
+    in_gidx = [g._graph for g in graphs]
+    out_gidx = _CAPI_CompactGraphs(in_gidx)
+    return [DGLGraph(gidx) for gidx in out_gidx]
+
 _init_api('dgl.sampling', __name__)
