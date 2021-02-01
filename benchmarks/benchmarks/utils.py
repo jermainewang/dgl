@@ -63,7 +63,12 @@ def _download(url, path, filename):
     print('Download finished.')
 
 
+GRAPH_CACHE = {}
+
 def get_graph(name, format):
+    global GRAPH_CACHE
+    if name in GRAPH_CACHE:
+        return GRAPH_CACHE[name].to(format)
     g = None
     if name == 'cora':
         g = dgl.data.CoraGraphDataset(verbose=False)[0]
@@ -95,9 +100,8 @@ def get_graph(name, format):
         g = get_ogb_graph(name)
     else:
         raise Exception("Unknown dataset")
+    GRAPH_CACHE[name] = g
     g = g.formats([format])
-    # Remove format strict
-    g = g.formats(['coo', 'csr', 'csc'])
     return g
 
 def get_ogb_graph(name):
